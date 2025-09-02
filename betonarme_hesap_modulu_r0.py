@@ -56,15 +56,15 @@ OVERHEAD_GROUPS_PRESET = [
     ("Ofis/GSM/evrak/izin", 1.5),
 ]
 
-# Basit INDIRECT preset (eski düzen: parçalamıyoruz)
+# Indirect (şantiye hizmet/altyapı) preset — overhead ile çakışmayı önlemek için ayrıştırıldı
 INDIRECT_PRESET_DEFAULTS = {
-    "Şantiye Genel İdare (Общехозяйственные расходы на площадке)": 7.0,
-    "Ekipman/Amortisman (Оборудование/Амортизация)": 5.0,
-    "Lojistik/Sevkiyat (Логистика/Доставка)": 3.0,
-    "Güvenlik & İSG (Охрана и ОТ)": 2.0,
-    "Ofis/GSM/İzin-Belge (Офис/связь/разрешения)": 1.5,
+    "Şantiye enerji-su (Энергия/вода на площадке)": 2.0,
+    "Geçici yollar/erişim (Временные дороги/подъезды)": 1.0,
+    "Aydınlatma/jeneratör (Освещение/генератор)": 1.0,
+    "Geçici ofis/soy. odaları (Врем. офис/раздевалки)": 0.8,
+    "Depolama/çit/kapı güvenliği (Склад/ограждение/охрана)": 1.2,
+    "Temizlik/çöp/saha bakım (Уборка/вывоз/обслуживание)": 1.0,
 }
-CSV_DELIM = ";"
 
 # Adam-saat normları
 SCENARIO_NORMS = {
@@ -649,7 +649,6 @@ def inject_style():
         div[data-testid="stDataFrame"] {
             font-family: var(--font-primary) !important;
         }
-        
         div[data-testid="stDataFrame"] table {
             font-family: var(--font-primary) !important;
         }
@@ -1167,11 +1166,23 @@ def clear_loading_placeholder():
 # --- Price & difficulty helpers (centralized) ---
 SCENARIO_BASELINE = "Gerçekçi"  # referans senaryo
 
+# Override'lı senaryo normları okuma helper'ı
+def get_effective_scenario_norms() -> dict:
+    """SCENARIO_NORMS üzerine override varsa onu döndürür."""
+    try:
+        ovr = st.session_state.get("SCENARIO_NORMS_OVR")
+        if isinstance(ovr, dict) and ovr:
+            return ovr
+    except Exception:
+        pass
+    return SCENARIO_NORMS
+
 def get_scenario_multiplier_for_price(current_scenario: str) -> float:
     # Temel (Gerçekçi) ile mevcut senaryonun 'Temel' normunu oranla
     try:
-        ref = float(SCENARIO_NORMS.get(SCENARIO_BASELINE, SCENARIO_NORMS["Gerçekçi"])["Temel"])
-        cur = float(SCENARIO_NORMS.get(current_scenario, SCENARIO_NORMS["Gerçekçi"])["Temel"])
+        norms_map = get_effective_scenario_norms()
+        ref = float(norms_map.get(SCENARIO_BASELINE, SCENARIO_NORMS["Gerçekçi"]) ["Temel"])
+        cur = float(norms_map.get(current_scenario, SCENARIO_NORMS["Gerçekçi"]) ["Temel"])
         return (cur / ref) if ref > 0 else 1.0
     except Exception:
         return 1.0
@@ -1292,7 +1303,6 @@ def percent_input(label:str, default_pct:float, min_val:float=0.0, max_val:float
     )
     
     return v/100.0  # yüzde → oran
-
 def round_preserve_sum(values):
     vals=[float(x) for x in values]
     floors=[math.floor(x) for x in vals]
@@ -1375,7 +1385,8 @@ def build_norms_for_scenario(scenario: str, selected_elements: list[str]) -> tup
     - Bulunamayan anahtar/etiketlerde hata fırlatmaz; uyarı gösterir ve o kalemi atlar.
     - Çıkış: (Temel normu, {FULL_LABEL -> relatif çarpan})
     """
-    norms = SCENARIO_NORMS.get(scenario) or SCENARIO_NORMS["Gerçekçi"]
+    norms_map = get_effective_scenario_norms()
+    norms = norms_map.get(scenario) or SCENARIO_NORMS["Gerçekçi"]
     n_temel = float(norms["Temel"])
 
     # 1) geçerli kanonik anahtar listesi
@@ -1711,7 +1722,6 @@ tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonu
     "📊 Sonuçlar", 
     "🤖 Asistan (GPT + RAG + Dev)"
 ])
-
 # ==================== 0) SABİTLER ====================
 with tab_sabitler:
     # Yardımcı fonksiyonlar
@@ -1722,19 +1732,8 @@ with tab_sabitler:
     OVR = st.session_state.setdefault("CONST_OVERRIDES", {})
     def eff(name, default): return OVR.get(name, default)
     
-    # Global sabitler (default değerler)
-    NDFL_RUS = 0.130
-    NDFL_SNG = 0.130
-    NDFL_TUR = 0.000
-    OPS = 0.220
-    OSS = 0.029
-    OMS = 0.051
-    NSIPZ_RISK_RUS_SNG = 0.009
-    NSIPZ_RISK_TUR_VKS = 0.018
-    SNG_PATENT_MONTH = 7000.0
-    SNG_TAXED_BASE = 33916.0
-    TUR_TAXED_BASE = 167000.0
-    CASH_COMMISSION_RATE = 0.235
+    # Global sabitler (default değerler) — yukarıda tanımlananları yeniden tanımlamıyoruz
+    # CASH_COMMISSION_RATE varsayılanı üstte tanımlıdır; burada yeniden tanımlamıyoruz
     
     # Kompakt kart ızgarası CSS
     st.markdown("""
@@ -1988,6 +1987,41 @@ with tab_sabitler:
         
         st.markdown('</div>', unsafe_allow_html=True)
     
+    # Adam-saat Normları (override)
+    with st.expander("👷‍♂️ Adam-saat Normları (Senaryolar)", expanded=False):
+        st.caption("Senaryolara göre eleman bazında a·s/m³ normlarını düzenleyin. Boş bırakılanlar varsayılanı kullanır.")
+        norms_map = get_effective_scenario_norms()
+        scenarios = ["İdeal","Gerçekçi","Kötü"]
+        elements_tr = ["Grobeton","Rostverk","Temel","Döşeme","Perde","Merdiven"]
+        # Editor için tablo
+        import pandas as _pd
+        rows = []
+        for sc in scenarios:
+            base = norms_map.get(sc, SCENARIO_NORMS["Gerçekçi"]) if isinstance(norms_map.get(sc), dict) else SCENARIO_NORMS.get(sc, {})
+            row = {"Senaryo": sc}
+            for et in elements_tr:
+                try:
+                    row[et] = float(base.get(et, SCENARIO_NORMS["Gerçekçi"][et]))
+                except Exception:
+                    row[et] = SCENARIO_NORMS["Gerçekçi"].get(et, 16.0)
+            rows.append(row)
+        df0 = _pd.DataFrame(rows)
+        edited = st.data_editor(df0, hide_index=True, num_rows="fixed")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Kaydet (Normları Override Et)"):
+                new_map = {}
+                for _, r in edited.iterrows():
+                    sc = str(r["Senaryo"]) if r.get("Senaryo") in scenarios else None
+                    if not sc: continue
+                    new_map[sc] = {et: float(r.get(et, SCENARIO_NORMS[sc][et])) for et in elements_tr}
+                st.session_state["SCENARIO_NORMS_OVR"] = new_map
+                st.success("Adam-saat normları güncellendi.")
+        with col2:
+            if st.button("Override'ı Temizle"):
+                st.session_state.pop("SCENARIO_NORMS_OVR", None)
+                st.info("Override temizlendi. Varsayılan normlar kullanılacak.")
+
     # SNG GRUBU
     with st.expander("SNG Vatandaşları", expanded=False):
         st.markdown('<div class="const-grid">', unsafe_allow_html=True)
@@ -2167,7 +2201,6 @@ with tab_sabitler:
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
-
 # ==================== 1) GENEL ====================
 with tab_genel:
     col1, col2 = st.columns(2)
@@ -2663,7 +2696,6 @@ with tab_gider:
         st.success(f"✅ **Indirect Toplam:** {ind_total:.2f}% ({ind_total/100.0:.3f})")
     else:
         st.info("ℹ️ **Indirect:** Hiçbir kalem aktif değil (0%) - Varsayılan olarak tüm kalemler pasif")
-
 # ==================== 5) SORUMLULUK MATRİSİ (şık) ====================
 with tab_matris:
     st.markdown("#### ✨ Sorumluluk Matrisi (checkbox + % katkı)")
@@ -2966,7 +2998,6 @@ with tab_sonuclar:
                 <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Lütfen bekleyin, sonuçlar hazırlanıyor...</p>
             </div>
             """, unsafe_allow_html=True)
-        
         with st.spinner("🚀 Hesaplamalar yapılıyor..."):
             try:
                 # Güvenli değişken erişimi
@@ -2992,14 +3023,9 @@ with tab_sonuclar:
                     
                     # SENARYO NORMALARI VE ZORLUK - TAM ALGORİTMA
                     # Senaryoya göre temel norm (Temel için)
-                    scenario_base_norms = {
-                        "İdeal": 14,      # Temel = 14 a·s/m³
-                        "Gerçekçi": 16,   # Temel = 16 a·s/m³
-                        "Kötü": 19        # Temel = 19 a·s/m³
-                    }
-                    
-                    # Senaryo bazı
-                    scenario_base = scenario_base_norms.get(scenario, 16)
+                    # Senaryo bazı — override destekli
+                    _norms_map = get_effective_scenario_norms()
+                    scenario_base = float((_norms_map.get(scenario) or SCENARIO_NORMS["Gerçekçi"]) ["Temel"])
                     
                     # Zorluk çarpanı tek merkezden hesaplanır ve cache'e yazılır
                     z_mult = get_difficulty_multiplier_cached()
@@ -3388,7 +3414,6 @@ with tab_sonuclar:
                 st.session_state["calculation_results"] = None
             finally:
                 clear_loading_placeholder()
-    
     # Hesaplama sonuçlarını göster
     if st.session_state.get("calculation_results"):
         results = st.session_state["calculation_results"]
@@ -3794,11 +3819,6 @@ with tab_sonuclar:
         st.markdown("2. **Eleman & Metraj** sekmesinde betonarme elemanları seçin")
         st.markdown("3. **Roller** sekmesinde rol kompozisyonunu belirleyin")
         st.markdown("4. **HESAPLA** butonuna tıklayarak sonuçları görün")
-    
-
-
-
-
 # ==================== 7) ASİSTAN: GPT Öneri + Oran Kontrol + RAG + DEV CONSOLE ====================
 with tab_asistan:
     # ---------- GPT öneri / web doğrulama (mevcut) ----------
