@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import os, io, json, math, uuid, requests
+import os, io, json, math, uuid, hashlib, requests
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -82,6 +82,46 @@ LABELS = {
     "perde":    "Perde (Стена/диафрагма)",
     "merdiven": "Merdiven (Лестница)",
 }
+
+# =============== Basit Versiyon Kontrol ===============
+VERSION_FILE = os.path.join(os.path.dirname(__file__), "version.json")
+
+def _file_md5(path: str) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _load_version() -> dict:
+    try:
+        with open(VERSION_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"version": "0.1.0", "code_hash": ""}
+
+def _save_version(v: dict) -> None:
+    try:
+        with open(VERSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(v, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _bump_patch(ver: str) -> str:
+    try:
+        major, minor, patch = ver.split(".")
+        return f"{major}.{minor}.{int(patch)+1}"
+    except Exception:
+        return "0.1.0"
+
+def get_app_version(auto_bump: bool = True) -> str:
+    state = _load_version()
+    current_hash = _file_md5(__file__)
+    if auto_bump and state.get("code_hash") != current_hash:
+        state["version"] = _bump_patch(state.get("version", "0.1.0"))
+        state["code_hash"] = current_hash
+        _save_version(state)
+    return state.get("version", "0.1.0")
 
 # ---- Element key canon helpers (TR/RU/etiket -> kanonik anahtar) ----
 CANON_KEYS = ("grobeton","rostverk","temel","doseme","perde","merdiven")
@@ -1757,6 +1797,20 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     st.caption(bi("💡 Anahtar girmezsen GPT/RAG özellikleri çalışmaz.", "💡 Без ключей API функции GPT/RAG не работают."))
+
+    # Versiyon kutusu (compact, styled)
+    with st.container(border=True):
+        cols = st.columns([0.6,0.4])
+        with cols[0]:
+            st.caption(bi("Sürüm","Версия"))
+            st.markdown(f"<div style='display:inline-block;padding:2px 8px;border-radius:9999px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;font-weight:600;'>v{get_app_version(auto_bump=True)}</div>", unsafe_allow_html=True)
+        with cols[1]:
+            if st.button("Patch ↑", help=bi("Patch sürümünü artır","Увеличить patch-версию")):
+                state = _load_version()
+                state["version"] = _bump_patch(state.get("version","0.1.0"))
+                state.setdefault("code_hash", _file_md5(__file__))
+                _save_version(state)
+                st.toast(bi("Sürüm güncellendi","Версия обновлена"))
     
     st.markdown(bi("**🤖 OpenAI API Key**", "**🤖 Ключ OpenAI API**"))
     st.session_state["OPENAI_API_KEY"] = st.text_input(
@@ -1778,14 +1832,7 @@ with st.sidebar:
     
     # Sidebar alt bilgi
     st.markdown("---")
-    st.markdown("""
-    <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
-        <p style="margin: 0; font-size: 0.8rem; color: #6c757d;">
-            🏗️ Betonarme Hesaplama Modülü<br>
-            <strong>v1.0.0</strong>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Alt bilgi kaldırıldı (tekrarlı sürüm gösterimini sadeleştiriyoruz)
 
 # Modern başlık
 st.markdown("""
@@ -3043,13 +3090,22 @@ with tab_gider:
     # Indirect oranını session state'e kaydet
     st.session_state["indirect_rate_total"] = ind_total / 100.0
     
-    # Indirect toplamını göster
-    if ind_total > 0:
-        st.success(bi(f"✅ Indirect Toplam: {ind_total:.2f}% ({ind_total/100.0:.3f})",
-                      f"✅ Косвенные всего: {ind_total:.2f}% ({ind_total/100.0:.3f})"))
-    else:
-        st.info(bi("ℹ️ Indirect: Hiçbir kalem aktif değil (0%) - Varsayılan olarak tüm kalemler pasif",
-                   "ℹ️ Косвенные: нет активных строк (0%) — по умолчанию все выключены"))
+    # Grup toplamlarını göster: Sarf, Overhead, Indirect + Genel Toplam
+    st.markdown("---")
+    cols_sum = st.columns(3)
+    with cols_sum[0]:
+        st.info(bi(f"Sarf Toplam: {cons_total:.2f}% ({cons_total/100.0:.3f})",
+                   f"Расходники всего: {cons_total:.2f}% ({cons_total/100.0:.3f})"))
+    with cols_sum[1]:
+        st.info(bi(f"Genel Gider Toplam: {ovh_total:.2f}% ({ovh_total/100.0:.3f})",
+                   f"Overhead всего: {ovh_total:.2f}% ({ovh_total/100.0:.3f})"))
+    with cols_sum[2]:
+        st.info(bi(f"Indirect Toplam: {ind_total:.2f}% ({ind_total/100.0:.3f})",
+                   f"Косвенные всего: {ind_total:.2f}% ({ind_total/100.0:.3f})"))
+
+    grand_total = cons_total + ovh_total + ind_total
+    st.success(bi(f"✅ Genel Toplam: {grand_total:.2f}% ({grand_total/100.0:.3f})",
+                  f"✅ Итого по группам: {grand_total:.2f}% ({grand_total/100.0:.3f})"))
 # ==================== 5) SORUMLULUK MATRİSİ (şık) ====================
 with tab_matris:
     bih("✨ Sorumluluk Matrisi (checkbox + % katkı)", "✨ Матрица ответственности (чекбокс + вклад, %)", level=4)
@@ -4244,53 +4300,7 @@ with tab_sonuclar:
         else:
             st.info("Grafik için tarih aralığında en az bir ay olmalı.")
 
-        # Excel/CSV indirme - Modern butonlar
-        st.markdown("---")
-        bih("📥 Rapor İndirme","📥 Выгрузка отчётов", level=3)
-        
-        col_download1, col_download2 = st.columns(2)
-        
-        with col_download1:
-            # Excel
-            xls_buf = io.BytesIO()
-            try:
-                with ExcelWriter(xls_buf, engine="xlsxwriter") as xw:
-                    data['elements_df'].to_excel(xw, sheet_name="Svodka", index=False)
-                    data['roles_calc_df'].to_excel(xw, sheet_name="Roller", index=False)
-                    # Manpower Distribution tablosu ekle
-                    if not data['month_wd_df'].empty:
-                        n_months = len(data['month_wd_df'])
-                        weights = [1.0/n_months] * n_months
-                        headcounts_float = [data['person_months_total'] * wi for wi in weights]
-                        headcounts_int = [round(h) for h in headcounts_float]
-                        
-                        month_wd_df_copy = data['month_wd_df'].copy()
-                        month_wd_df_copy["Manpower (Численность)"] = headcounts_int
-                        month_wd_df_copy.to_excel(xw, sheet_name="Manpower Distribution", index=False)
-                st.download_button(
-                    "📥 Excel İndir (.xlsx)", 
-                    data=xls_buf.getvalue(),
-                    file_name="iscilik_m3_rapor.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    help="Excel formatında detaylı rapor indir"
-                )
-            except Exception as e:
-                st.error(f"Excel oluşturma hatası: {e}")
-
-        with col_download2:
-            # CSV
-            csv_buf = io.StringIO()
-            if not data['elements_df'].empty:
-                data['elements_df'].to_csv(csv_buf, sep=";", index=False)
-            st.download_button(
-                "⬇️ CSV İndir (.csv)", 
-                data=csv_buf.getvalue().encode("utf-8"),
-                file_name="iscilik_m3_cikti.csv", 
-                mime="text/csv",
-                use_container_width=True,
-                help="CSV formatında veri indir"
-            )
+        # Rapor indirme bölümü kaldırıldı; indirmeler 'Import' sekmesine taşındı.
 
     else:
         st.info("💡 Hesaplama yapmak için yukarıdaki **HESAPLA** butonuna tıklayın.")
