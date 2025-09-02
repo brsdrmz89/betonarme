@@ -1236,6 +1236,56 @@ def gross_from_net(net: float, ndfl_rate: float) -> float:
 def employer_cost_for_gross(gross: float, ops: float, oss: float, oms: float, nsipz: float) -> float:
     return float(gross)*(1.0+ops+oss+oms+nsipz)
 
+# --- Progressive NDFL helpers (resident brackets 2025) ---
+def _resident_ndfl_brackets_2025() -> list[tuple[float|None, float]]:
+    """Returns [(upper_limit, rate), ...] with last upper_limit=None as infinity."""
+    # Annual thresholds (RUB) and rates
+    return [
+        (2_400_000.0, 0.13),
+        (5_000_000.0, 0.15),
+        (20_000_000.0, 0.18),
+        (50_000_000.0, 0.20),
+        (None, 0.22),
+    ]
+
+def gross_from_net_progressive_resident(net_annual: float) -> float:
+    """Invert progressive tax to get annual gross from annual net, using resident brackets 2025."""
+    try:
+        target_net = max(0.0, float(net_annual))
+    except Exception:
+        target_net = 0.0
+    if target_net <= 0.0:
+        return 0.0
+
+    brackets = _resident_ndfl_brackets_2025()
+    gross_accum = 0.0
+    net_remaining = target_net
+    prev_limit = 0.0
+
+    for upper, rate in brackets:
+        segment_width = (upper - prev_limit) if upper is not None else None
+        segment_net_cap = (segment_width * (1.0 - rate)) if segment_width is not None else None
+
+        if segment_width is None:
+            # infinite top bracket
+            gross_accum += net_remaining / (1.0 - rate)
+            net_remaining = 0.0
+            break
+
+        if net_remaining >= segment_net_cap - 1e-9:
+            # fill entire segment
+            gross_accum += segment_width
+            net_remaining -= segment_net_cap
+            prev_limit = upper
+            continue
+        else:
+            # partial in this segment
+            gross_accum += net_remaining / (1.0 - rate)
+            net_remaining = 0.0
+            break
+
+    return gross_accum
+
 def try_fetch_json(url:str):
     try:
         r=requests.get(url, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
@@ -1343,7 +1393,8 @@ def monthly_role_cost_multinational(row: pd.Series, prim_sng: bool, prim_tur: bo
     per_rus   = employer_cost_for_gross(gross_rus, ops, oss, oms, nsipz_risk_rus_sng) + extras_person_ex_vat
 
     # SNG (patent; tüm sigorta sistemleri + patent; resmi brüt tabana kadar)
-    gross_sng_full = gross_from_net(net, ndfl_sng)
+    # 2025 kademeli NDFL’i yıllık bazda uygula (patent avansı mahsup edilmez — sade model)
+    gross_sng_full = gross_from_net_progressive_resident(net*12.0) / 12.0
     if prim_sng:
         gross_sng_off = min(sng_taxed_base, gross_sng_full)         # resmi brüt (tabana kadar)
         prim_amount   = max(gross_sng_full - gross_sng_off, 0.0)     # ELDEN kısım (vergisiz/primsiz)
@@ -1356,7 +1407,9 @@ def monthly_role_cost_multinational(row: pd.Series, prim_sng: bool, prim_tur: bo
               + sng_patent_month + extras_person_ex_vat + prim_amount + commission
 
     # TUR (VKS; yalnız iş kazası primi)
-    gross_tur_full = gross_from_net(net, ndfl_tur)
+    # VKS (TR) — progressive NDFL resident brackets on annualized basis
+    # Annualize net assuming 12 months for simplicity
+    gross_tur_full = gross_from_net_progressive_resident(net*12.0) / 12.0
     if prim_tur:
         gross_tur_off = min(tur_taxed_base, gross_tur_full)
         prim_tr       = max(gross_tur_full - gross_tur_off, 0.0)
@@ -1367,6 +1420,8 @@ def monthly_role_cost_multinational(row: pd.Series, prim_sng: bool, prim_tur: bo
         comm_tr       = 0.0
     per_tur = employer_cost_for_gross(gross_tur_off, 0.0,0.0,0.0,nsipz_risk_tur_vks) \
               + extras_person_ex_vat + prim_tr + comm_tr
+
+    # Uzaktan çalışma senaryoları kaldırıldı — standart yerinde çalışma varsayımı
 
     # Ülke karması
     p_rus=max(float(row["%RUS"]),0.0); p_sng=max(float(row["%SNG"]),0.0); p_tur=max(float(row["%TUR"]),0.0)
@@ -1711,7 +1766,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------- Modern Sekmeler ----------
-tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonuclar, tab_asistan = st.tabs([
+tab_mantik, tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonuclar, tab_asistan = st.tabs([
+    "🧮 Hesap Mantığı",
     "⚙️ Sabitler",
     "🚀 Genel", 
     "🧩 Eleman & Metraj", 
@@ -1721,6 +1777,142 @@ tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonu
     "📊 Sonuçlar", 
     "🤖 Asistan (GPT + RAG + Dev)"
 ])
+with tab_mantik:
+    st.markdown("### 🧮 Hesap Mantığı ve Metodoloji")
+    st.markdown("Bu bölüm, yazılımın neyi, nasıl ve hangi sırayla hesapladığını en sade haliyle açıklar.")
+
+    # 1) Terminoloji
+    st.markdown("#### 1) Terminoloji")
+    st.markdown(
+        """
+        - **N**: Net maaş (çalışanın eline geçen, aylık)
+        - **G**: Resmi brüt (aylık)
+        - **r_NDFL**: Gelir vergisi oranı. 2025 için artan kademeli (rezident): 13/15/18/20/22
+        - **OPS/OSS/OMS**: Emeklilik/Sosyal/Sağlık işveren prim oranları (yalnız resmi brüte)
+        - **НСиПЗ**: İş kazası/meslek hastalığı primi (işveren)
+        - **B_SNG**, **B_TUR**: Resmi brüt tavanları (SNG ve VKS için)
+        - **P**: Patent aylık sabit bedeli (SNG)
+        - **k_cash**: Elden kısım komisyon oranı
+        - **E**: Elden (resmi tavanın üstü) kısım (varsa)
+        - **extras**: Kişi başı sabit ekstralar (yemek, barınma vb., KDV uygun şekilde ayrıştırılır)
+        """
+    )
+
+    # 2) Net→Brüt (artan NDFL)
+    st.markdown("#### 2) Net → Brüt (Artan NDFL 2025)")
+    st.markdown(
+        """
+        - Aylık net, yıllıklaştırılır: 12 × N.
+        - 2025 kademeleri (rezident): 2.4M/5M/20M/50M (₽) eşikleri, oranlar 13/15/18/20/22.
+        - Yıllık netten yıllık brüte, her kademedeki net=brüt×(1−r) ilişkisiyle ters gidilerek ulaşılır; aylık brüt = yıllık brüt ÷ 12.
+        - Bu mantık hem SNG (patent) hem VKS (TR) için uygulanır.
+        """
+    )
+
+    # 3) SNG (patent) maliyeti
+    st.markdown("#### 3) SNG (Patent) — İşveren Maliyeti")
+    st.markdown(
+        """
+        1) Netten brüte: G = ProgressiveInverse(12×N)/12.
+        2) Resmi brüt ve elden:
+           - G_official = min(G, B_SNG)
+           - E = max(G − B_SNG, 0)
+        3) Komisyon: C = E × k_cash
+        4) İşveren primli resmi kısım: G_official × (1 + OPS + OSS + OMS + НСиПЗ)
+        5) Toplam işveren maliyeti (SNG):
+        """
+    )
+    st.latex(r"\text{Cost}_{SNG} = G_{off}\,(1+OPS+OSS+OMS+HS) + P + extras + E + C")
+    st.markdown("Burada HS = НСиПЗ. Not: P (patent) NDFL’den mahsup edilmez — sabit gider olarak eklenir.")
+
+    # 4) VKS (TR) maliyeti
+    st.markdown("#### 4) VKS (TR) — İşveren Maliyeti")
+    st.markdown(
+        """
+        1) Netten brüte: G = ProgressiveInverse(12×N)/12.
+        2) Resmi brüt ve elden:
+           - G_official = min(G, B_TUR)
+           - E = max(G − B_TUR, 0)
+        3) Komisyon: C = E × k_cash (VKS için kullanılmıyorsa 0)
+        4) İşveren primleri: yalnız НСиПЗ
+        """
+    )
+    st.latex(r"\text{Cost}_{VKS} = G_{off}\,(1+HS) + extras + E + C")
+
+    # 5) Ülke karması (role bazında)
+    st.markdown("#### 5) Ülke Karması (Rol bazında)")
+    st.markdown(
+        """
+        Her rol satırı için ülke payları yüzdesel olarak verilir ve 1’e normalize edilir.
+        """
+    )
+    st.latex(r"\text{Cost}_{per\,person} = p_{RUS}\,Cost_{RUS} + p_{SNG}\,Cost_{SNG} + p_{TUR}\,Cost_{VKS}")
+
+    # 6) Normlar, senaryo ve zorluk
+    st.markdown("#### 6) Normlar, Senaryo ve Zorluk")
+    st.markdown(
+        """
+        - Temel norm (senaryo = Gerçekçi) eleman “Temel” için n_ref alınır.
+        - Seçilen senaryonun “Temel” değeri ile oranlanarak senaryo çarpanı s hesaplanır.
+        - Eleman göreli katsayıları k_e normalize edilerek ortalaması 1 yapılır.
+        - Zorluk çarpanı z, girilen faktörlerden çarpımla oluşur: z = ∏(1+f_i).
+        - Eleman normu: n_e = n_ref × s × k_e × z.
+        """
+    )
+    st.latex(r"n_e = n_{ref} \times s \times k_e \times z")
+
+    # 7) Çekirdek işçilik ve giderlerin eklenmesi
+    st.markdown("#### 7) Çekirdek İşçilik ve Giderlerin Eklenmesi")
+    st.markdown(
+        """
+        - Çekirdek işçilik (maliyet): seçili elemanların metrajı ve n_e kullanılarak toplanır.
+        - Sarf (%), Genel Gider (%) ve Indirect (%) oranları sırasıyla uygulanır. Genel Gider için üst sınır (OVERHEAD_RATE_MAX) korunur.
+        """
+    )
+
+    # 7.1) Metraj ve Adam-saat adım adım
+    st.markdown("##### 7.1) Metraj ve Adam-saat")
+    st.markdown(
+        """
+        - Eleman e için metraj m_e (m³) ve norm n_e (a·s/m³) ise toplam adam-saat: A = Σ_e m_e × n_e.
+        - Bir kişinin aylık çalışabileceği saat: H = gün/say × saat/gün. Uygulamada H = ortalama_iş_günü × hours_per_day.
+        - Toplam kişi-ay: PM = A / H.
+        - Kişi başı aylık maliyet (extras dahil) → (₽/saat) cinsinden fiyat = (M_with) / H.
+        - Çekirdek m³ maliyeti: core_price = (M_with / H) × n_e.
+        """
+    )
+    st.latex(r"A = \sum_e m_e\, n_e\quad ;\quad H = D_{avg}\,h_d\quad ;\quad PM = \dfrac{A}{H}")
+    st.latex(r"\text{core\_price}_e = \left(\dfrac{M_{with}}{H}\right) \times n_e")
+
+    # 7.2) Gider dağıtım formülleri
+    st.markdown("##### 7.2) Gider Dağıtımı ve Toplamlar")
+    st.markdown(
+        """
+        - Çekirdek + Genel: core_genel_e = core_price_e × (1 + genel_oran)
+        - Sarf toplamı: S = (Σ_e core_genel_e × m_e) × consumables_oran
+        - Indirect toplamı: I = (Σ_e core_genel_e × m_e + S) × indirect_oran
+        - Eleman e’ye dağıtım ağırlığı: w_e = (core_genel_e × m_e) / Σ_e (core_genel_e × m_e)
+        - Eleman e toplam (₽/m³): total_e = core_price_e + genel_e + sarf_e + indirect_e
+        """
+    )
+    st.latex(r"\text{genel\_e} = \min(\text{overhead\_rate}, \text{max})\times \text{core\_price}_e")
+    st.latex(r"S = \left(\sum_e (\text{core\_price}_e+\text{genel}_e) m_e\right) \times c_{sarf}")
+    st.latex(r"I = \left(\sum_e (\text{core\_price}_e+\text{genel}_e) m_e + S\right) \times c_{indir}")
+    st.latex(r"w_e = \dfrac{(\text{core\_price}_e+\text{genel}_e) m_e}{\sum_e (\text{core\_price}_e+\text{genel}_e) m_e}")
+    st.latex(r"\text{total}_e = \text{core\_price}_e + \text{genel}_e + w_e\, \dfrac{S}{m_e} + w_e\, \dfrac{I}{m_e}")
+
+    # 8) Mantık kontrolleri
+    st.markdown("#### 8) Mantık Kontrolleri")
+    st.markdown(
+        """
+        - Artan NDFL tersine çevirme hem SNG hem VKS için aynı yöntemle yapılır.
+        - SNG’de patent, vergiden mahsup edilmez; bilinçli basitleştirme. İleride istenirse anahtarla açılabilir.
+        - VKS’de yalnız НСиПЗ uygulanır; SNG’de tüm sosyal primler resmi brüte uygulanır.
+        - Ülke karması yüzdeleri her satırda normalize edilir (toplam 1 olur).
+        - Genel gider üst sınırı uygulanır; UI’da da aynı sınır uyarılır.
+        """
+    )
+
 # ==================== 0) SABİTLER ====================
 with tab_sabitler:
     # Yardımcı fonksiyonlar
@@ -2213,6 +2405,8 @@ with tab_genel:
         )
     st.caption("ℹ️ ‘Prim' (elden/cash) **hiçbir vergi/prim içermez**; yalnızca komisyon uygulanır. Resmi brüt kısma OPS/OSS/OMS + НСиПЗ (VKS'de yalnız НСиПЗ).")
 
+    # Uzaktan çalışma/НСиПЗ seçenekleri kaldırıldı (işçiler sahada çalışır varsayımı)
+
     cA, cB = st.columns(2)
     with cA:
         st.session_state["start_date"] = st.date_input(
@@ -2259,6 +2453,10 @@ with tab_genel:
             index=["İdeal","Gerçekçi","Kötü"].index(st.session_state.get("scenario","Gerçekçi")),
             key="scenario_sel"
         )
+
+    # Kapsam notu (müşteri varsayımları)
+    st.caption("SNG kapsamı: Kırgızistan, Özbekistan, Tacikistan, Türkmenistan. VKS: Türkiye. ")
+    st.caption("Patent bedeli her ay sabit maliyet olarak kabul edilir; NDFL mahsup edilmez (basitleştirilmiş yaklaşım).")
 
     ### ✅ Çevresel/Zorluk Faktörleri — norm çarpanı
     def render_difficulty_block():
