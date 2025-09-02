@@ -242,7 +242,6 @@ def inject_style():
             font-weight: var(--font-medium);
             font-size: var(--font-size-base);
             letter-spacing: 0.01em;
-        }
             border-radius: 12px;
             background: white;
             border: 2px solid var(--border-color);
