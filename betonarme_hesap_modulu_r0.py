@@ -2112,6 +2112,8 @@ with tab_mantik:
                 st.download_button("İndir", data=buf.getvalue(), file_name="hesap_mantigi_ozet.txt", mime="text/plain")
             except Exception as e:
                 st.warning(f"PDF yerine metin çıktı üretildi: {e}")
+
+with tab_sabitler:
     # RUSYA GRUBU
     with st.expander("Rusya Vatandaşları (RU) / Граждане РФ", expanded=False):
         st.markdown('<div class="const-grid">', unsafe_allow_html=True)
