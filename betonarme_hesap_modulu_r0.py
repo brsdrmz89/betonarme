@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import os, io, json, math, uuid, hashlib, requests
+import os, io, json, math, uuid, requests
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 # NDFL: Net'ten brüt'e çevrimde kullanılıyor; işveren primleri "brüt"e uygulanır (brüt+NDFL DEĞİL)
 NDFL_RUS = 0.130
 NDFL_SNG = 0.130
-NDFL_TUR = 0.130  # VKS için sabit oran modu başlangıcı; progressive modda 13/15/18/20/22 kademeleri kullanılır
+NDFL_TUR = 0.000  # VKS için gelir vergisi yok varsayım (işçilik nete göre), brüt hesap için 0
 
 # İşveren primleri (resmi BRÜT bazında)
 OPS = 0.220   # emeklilik
@@ -36,26 +36,6 @@ OVERHEAD_RATE_DEFAULT = 15.0  # Yüzde olarak (15.0%)
 OVERHEAD_RATE_MAX     = 25.0  # Yüzde olarak (25.0%)
 CONSUMABLES_RATE_DEFAULT = 5.0  # Yüzde olarak (5.0%)
 
-# =============== Yardımcı Fonksiyonlar ===============
-def ratio_to_pct(value):
-    try:
-        return float(value) * 100.0
-    except Exception:
-        return 0.0
-
-
-def pct_to_ratio(value):
-    try:
-        return float(value) / 100.0
-    except Exception:
-        return 0.0
-
-
-def eff(key: str, default):
-    """CONST_OVERRIDES içinden etkin değeri getirir, yoksa varsayılanı döner."""
-    overrides = st.session_state.get("CONST_OVERRIDES", {})
-    return overrides.get(key, default)
-
 # --- Gruplu Sarf ve Genel Gider preset'leri ---
 CONSUMABLES_PRESET = [
     ("Bağ teli / tel sarf", 1.2),
@@ -76,15 +56,15 @@ OVERHEAD_GROUPS_PRESET = [
     ("Ofis/GSM/evrak/izin", 1.5),
 ]
 
-# Indirect (şantiye hizmet/altyapı) preset — overhead ile çakışmayı önlemek için ayrıştırıldı
+# Basit INDIRECT preset (eski düzen: parçalamıyoruz)
 INDIRECT_PRESET_DEFAULTS = {
-    "Şantiye enerji-su (Энергия/вода на площадке)": 2.0,
-    "Geçici yollar/erişim (Временные дороги/подъезды)": 1.0,
-    "Aydınlatma/jeneratör (Освещение/генератор)": 1.0,
-    "Geçici ofis/soy. odaları (Врем. офис/раздевалки)": 0.8,
-    "Depolama/çit/kapı güvenliği (Склад/ограждение/охрана)": 1.2,
-    "Temizlik/çöp/saha bakım (Уборка/вывоз/обслуживание)": 1.0,
+    "Şantiye Genel İdare (Общехозяйственные расходы на площадке)": 7.0,
+    "Ekipman/Amortisman (Оборудование/Амортизация)": 5.0,
+    "Lojistik/Sevkiyat (Логистика/Доставка)": 3.0,
+    "Güvenlik & İSG (Охрана и ОТ)": 2.0,
+    "Ofis/GSM/İzin-Belge (Офис/связь/разрешения)": 1.5,
 }
+CSV_DELIM = ";"
 
 # Adam-saat normları
 SCENARIO_NORMS = {
@@ -102,46 +82,6 @@ LABELS = {
     "perde":    "Perde (Стена/диафрагма)",
     "merdiven": "Merdiven (Лестница)",
 }
-
-# =============== Basit Versiyon Kontrol ===============
-VERSION_FILE = os.path.join(os.path.dirname(__file__), "version.json")
-
-def _file_md5(path: str) -> str:
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-def _load_version() -> dict:
-    try:
-        with open(VERSION_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {"version": "0.1.0", "code_hash": ""}
-
-def _save_version(v: dict) -> None:
-    try:
-        with open(VERSION_FILE, "w", encoding="utf-8") as f:
-            json.dump(v, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-def _bump_patch(ver: str) -> str:
-    try:
-        major, minor, patch = ver.split(".")
-        return f"{major}.{minor}.{int(patch)+1}"
-    except Exception:
-        return "0.1.0"
-
-def get_app_version(auto_bump: bool = True) -> str:
-    state = _load_version()
-    current_hash = _file_md5(__file__)
-    if auto_bump and state.get("code_hash") != current_hash:
-        state["version"] = _bump_patch(state.get("version", "0.1.0"))
-        state["code_hash"] = current_hash
-        _save_version(state)
-    return state.get("version", "0.1.0")
 
 # ---- Element key canon helpers (TR/RU/etiket -> kanonik anahtar) ----
 CANON_KEYS = ("grobeton","rostverk","temel","doseme","perde","merdiven")
@@ -299,18 +239,17 @@ def inject_style():
         
         .stTabs [data-baseweb="tab"] {
             font-family: var(--font-primary);
-            font-weight: 600;
+            font-weight: var(--font-medium);
+            font-size: var(--font-size-base);
             letter-spacing: 0.01em;
+        }
             border-radius: 12px;
             background: white;
             border: 2px solid var(--border-color);
-            padding: 8px 12px;
-            min-width: 48px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem; /* emoji boyutu */
-            transition: all 0.3s ease;
+            padding: 16px 32px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
             overflow: hidden;
         }
@@ -508,6 +447,7 @@ def inject_style():
         .fade-in-up {
             animation: fadeInUp 0.6s ease-out;
         }
+        
         /* Responsive tasarım */
         @media (max-width: 768px) {
             .main-header h1 {
@@ -709,6 +649,7 @@ def inject_style():
         div[data-testid="stDataFrame"] {
             font-family: var(--font-primary) !important;
         }
+        
         div[data-testid="stDataFrame"] table {
             font-family: var(--font-primary) !important;
         }
@@ -1005,6 +946,7 @@ def inject_style():
             color: #2c5282 !important;
             text-align: right !important;
         }
+        
         /* Streamlit'in kendi CSS'ini tamamen override et - Tüm olası selector'lar */
         div[data-testid="stDataFrame"] table td,
         div[data-testid="stDataFrame"] table th,
@@ -1225,23 +1167,11 @@ def clear_loading_placeholder():
 # --- Price & difficulty helpers (centralized) ---
 SCENARIO_BASELINE = "Gerçekçi"  # referans senaryo
 
-# Override'lı senaryo normları okuma helper'ı
-def get_effective_scenario_norms() -> dict:
-    """SCENARIO_NORMS üzerine override varsa onu döndürür."""
-    try:
-        ovr = st.session_state.get("SCENARIO_NORMS_OVR")
-        if isinstance(ovr, dict) and ovr:
-            return ovr
-    except Exception:
-        pass
-    return SCENARIO_NORMS
-
 def get_scenario_multiplier_for_price(current_scenario: str) -> float:
     # Temel (Gerçekçi) ile mevcut senaryonun 'Temel' normunu oranla
     try:
-        norms_map = get_effective_scenario_norms()
-        ref = float(norms_map.get(SCENARIO_BASELINE, SCENARIO_NORMS["Gerçekçi"]) ["Temel"])
-        cur = float(norms_map.get(current_scenario, SCENARIO_NORMS["Gerçekçi"]) ["Temel"])
+        ref = float(SCENARIO_NORMS.get(SCENARIO_BASELINE, SCENARIO_NORMS["Gerçekçi"])["Temel"])
+        cur = float(SCENARIO_NORMS.get(current_scenario, SCENARIO_NORMS["Gerçekçi"])["Temel"])
         return (cur / ref) if ref > 0 else 1.0
     except Exception:
         return 1.0
@@ -1295,56 +1225,6 @@ def gross_from_net(net: float, ndfl_rate: float) -> float:
 
 def employer_cost_for_gross(gross: float, ops: float, oss: float, oms: float, nsipz: float) -> float:
     return float(gross)*(1.0+ops+oss+oms+nsipz)
-
-# --- Progressive NDFL helpers (resident brackets 2025) ---
-def _resident_ndfl_brackets_2025() -> list[tuple[float|None, float]]:
-    """Returns [(upper_limit, rate), ...] with last upper_limit=None as infinity."""
-    # Annual thresholds (RUB) and rates
-    return [
-        (2_400_000.0, 0.13),
-        (5_000_000.0, 0.15),
-        (20_000_000.0, 0.18),
-        (50_000_000.0, 0.20),
-        (None, 0.22),
-    ]
-
-def gross_from_net_progressive_resident(net_annual: float) -> float:
-    """Invert progressive tax to get annual gross from annual net, using resident brackets 2025."""
-    try:
-        target_net = max(0.0, float(net_annual))
-    except Exception:
-        target_net = 0.0
-    if target_net <= 0.0:
-        return 0.0
-
-    brackets = _resident_ndfl_brackets_2025()
-    gross_accum = 0.0
-    net_remaining = target_net
-    prev_limit = 0.0
-
-    for upper, rate in brackets:
-        segment_width = (upper - prev_limit) if upper is not None else None
-        segment_net_cap = (segment_width * (1.0 - rate)) if segment_width is not None else None
-
-        if segment_width is None:
-            # infinite top bracket
-            gross_accum += net_remaining / (1.0 - rate)
-            net_remaining = 0.0
-            break
-
-        if net_remaining >= segment_net_cap - 1e-9:
-            # fill entire segment
-            gross_accum += segment_width
-            net_remaining -= segment_net_cap
-            prev_limit = upper
-            continue
-        else:
-            # partial in this segment
-            gross_accum += net_remaining / (1.0 - rate)
-            net_remaining = 0.0
-            break
-
-    return gross_accum
 
 def try_fetch_json(url:str):
     try:
@@ -1412,6 +1292,7 @@ def percent_input(label:str, default_pct:float, min_val:float=0.0, max_val:float
     )
     
     return v/100.0  # yüzde → oran
+
 def round_preserve_sum(values):
     vals=[float(x) for x in values]
     floors=[math.floor(x) for x in vals]
@@ -1427,7 +1308,7 @@ def monthly_role_cost_multinational(row: pd.Series, prim_sng: bool, prim_tur: bo
     """
     ÖNEMLİ:
     - İşveren primleri, yalnız RESMİ BRÜT tutara uygulanır (OPS/OSS/OMS + NSiPZ). Brüt+NDFL değil.
-    - 'Gayriresmî/Elden' (nakit) kısma hiçbir vergi/prim eklenmez; sadece komisyon (CASH_COMMISSION_RATE) eklenir.
+    - 'Prim' (nakit/elden) kısmına hiçbir vergi/prim eklenmez; sadece komisyon (CASH_COMMISSION_RATE) eklenir.
     - SNG (patent): resmi brüt, SNG_TAXED_BASE ile sınırlanır; + aylık patent tutarı eklenir.
     - VKS (TR): yalnız NSiPZ uygulanır (OPS/OSS/OMS = 0).
     """
@@ -1448,59 +1329,35 @@ def monthly_role_cost_multinational(row: pd.Series, prim_sng: bool, prim_tur: bo
     tur_taxed_base = OVR.get("TUR_TAXED_BASE", TUR_TAXED_BASE)
     cash_commission_rate = OVR.get("CASH_COMMISSION_RATE", CASH_COMMISSION_RATE)
 
-    # Vergi rejimi: Artan (2025) mı, sabit oran mı?
-    use_progressive_ndfl = bool(st.session_state.get("use_progressive_ndfl", True))
-
     # RUS (tam sigortalı)
-    if use_progressive_ndfl:
-        gross_rus = gross_from_net_progressive_resident(net*12.0) / 12.0
-    else:
-        gross_rus = gross_from_net(net, ndfl_rus)
+    gross_rus = gross_from_net(net, ndfl_rus)
     per_rus   = employer_cost_for_gross(gross_rus, ops, oss, oms, nsipz_risk_rus_sng) + extras_person_ex_vat
 
-    # SNG (patent; tüm sigorta sistemleri + patent; resmi brüt asgariyi sağlar)
-    if use_progressive_ndfl:
-        # 2025 kademeli NDFL'i yıllık bazda uygula (patent avansı mahsup edilmez — sade model)
-        gross_sng_full = gross_from_net_progressive_resident(net*12.0) / 12.0
-    else:
-        gross_sng_full = gross_from_net(net, ndfl_sng)
-    # Resmi brüt asgariyi sağla
-    min_off_sng = float(sng_taxed_base)
-    if gross_sng_full < min_off_sng:
-        gross_sng_full = min_off_sng
+    # SNG (patent; tüm sigorta sistemleri + patent; resmi brüt tabana kadar)
+    gross_sng_full = gross_from_net(net, ndfl_sng)
     if prim_sng:
-        gross_sng_off = min_off_sng                               # resmi brüt en az asgari
-        prim_amount   = max(gross_sng_full - gross_sng_off, 0.0)   # elden kısım (vergisiz/primsiz)
-        commission    = prim_amount * cash_commission_rate
+        gross_sng_off = min(sng_taxed_base, gross_sng_full)         # resmi brüt (tabana kadar)
+        prim_amount   = max(gross_sng_full - gross_sng_off, 0.0)     # ELDEN kısım (vergisiz/primsiz)
+        commission    = prim_amount*cash_commission_rate
     else:
-        gross_sng_off = gross_sng_full                             # prim yoksa tamamı resmi olabilir
+        gross_sng_off = gross_sng_full
         prim_amount   = 0.0
         commission    = 0.0
     per_sng = employer_cost_for_gross(gross_sng_off, ops, oss, oms, nsipz_risk_rus_sng) \
               + sng_patent_month + extras_person_ex_vat + prim_amount + commission
 
-    # TUR (VKS; yalnız iş kazası primi; resmi brüt asgariyi sağlar)
-    if use_progressive_ndfl:
-        # VKS (TR) — progressive NDFL resident brackets on annualized basis (12 aylık varsayım)
-        gross_tur_full = gross_from_net_progressive_resident(net*12.0) / 12.0
-    else:
-        gross_tur_full = gross_from_net(net, ndfl_tur)
-    # Resmi brüt asgariyi sağla
-    min_off_tur = float(tur_taxed_base)
-    if gross_tur_full < min_off_tur:
-        gross_tur_full = min_off_tur
+    # TUR (VKS; yalnız iş kazası primi)
+    gross_tur_full = gross_from_net(net, ndfl_tur)
     if prim_tur:
-        gross_tur_off = min_off_tur
+        gross_tur_off = min(tur_taxed_base, gross_tur_full)
         prim_tr       = max(gross_tur_full - gross_tur_off, 0.0)
-        comm_tr       = prim_tr * cash_commission_rate
+        comm_tr       = prim_tr*cash_commission_rate
     else:
         gross_tur_off = gross_tur_full
         prim_tr       = 0.0
         comm_tr       = 0.0
     per_tur = employer_cost_for_gross(gross_tur_off, 0.0,0.0,0.0,nsipz_risk_tur_vks) \
               + extras_person_ex_vat + prim_tr + comm_tr
-
-    # Uzaktan çalışma senaryoları kaldırıldı — standart yerinde çalışma varsayımı
 
     # Ülke karması
     p_rus=max(float(row["%RUS"]),0.0); p_sng=max(float(row["%SNG"]),0.0); p_tur=max(float(row["%TUR"]),0.0)
@@ -1518,8 +1375,7 @@ def build_norms_for_scenario(scenario: str, selected_elements: list[str]) -> tup
     - Bulunamayan anahtar/etiketlerde hata fırlatmaz; uyarı gösterir ve o kalemi atlar.
     - Çıkış: (Temel normu, {FULL_LABEL -> relatif çarpan})
     """
-    norms_map = get_effective_scenario_norms()
-    norms = norms_map.get(scenario) or SCENARIO_NORMS["Gerçekçi"]
+    norms = SCENARIO_NORMS.get(scenario) or SCENARIO_NORMS["Gerçekçi"]
     n_temel = float(norms["Temel"])
 
     # 1) geçerli kanonik anahtar listesi
@@ -1762,7 +1618,7 @@ def controller_chat(current_state: dict):
 
     prop = st.session_state.get("last_controller_proposal")
     if prop and isinstance(prop, dict) and "changes" in prop:
-        st.markdown("📝 AI teklifi")
+        st.markdown("#### 📝 AI teklifi")
         st.code(json.dumps(prop, ensure_ascii=False, indent=2), language="json")
         if st.button("✅ Önerileri uygula"):
             cons_target=None; over_target=None
@@ -1785,23 +1641,6 @@ def _set_once(k, v):
     if k not in st.session_state:
         st.session_state[k] = v
 
-# Basit TR/RU birleştirici
-def bi(tr_text: str, ru_text: str) -> str:
-    try:
-        return f"{tr_text} / {ru_text}"
-    except Exception:
-        return str(tr_text)
-
-# Başlık ve metin için daha hoş TR+RU yerleşim yardımcıları
-def bih(tr: str, ru: str, level: int = 3):
-    lvl = max(1, min(level, 6))
-    st.markdown(f"{'#'*lvl} {tr}")
-    st.caption(ru)
-
-def bitr(tr: str, ru: str):
-    st.markdown(tr)
-    st.caption(ru)
-
 st.set_page_config(page_title="Betonarme İşçilik (RUB/m³) — Расчёт монолит", layout="wide")
 inject_style()
 
@@ -1814,23 +1653,9 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
-    st.caption(bi("💡 Anahtar girmezsen GPT/RAG özellikleri çalışmaz.", "💡 Без ключей API функции GPT/RAG не работают."))
-
-    # Versiyon kutusu (compact, styled)
-    with st.container(border=True):
-        cols = st.columns([0.6,0.4])
-        with cols[0]:
-            st.caption(bi("Sürüm","Версия"))
-            st.markdown(f"<div style='display:inline-block;padding:2px 8px;border-radius:9999px;background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;font-weight:600;'>v{get_app_version(auto_bump=True)}</div>", unsafe_allow_html=True)
-        with cols[1]:
-            if st.button("Patch ↑", help=bi("Patch sürümünü artır","Увеличить patch-версию")):
-                state = _load_version()
-                state["version"] = _bump_patch(state.get("version","0.1.0"))
-                state.setdefault("code_hash", _file_md5(__file__))
-                _save_version(state)
-                st.toast(bi("Sürüm güncellendi","Версия обновлена"))
+    st.caption("💡 Anahtar girmezsen GPT/RAG özellikleri çalışmaz.")
     
-    st.markdown(bi("**🤖 OpenAI API Key**", "**🤖 Ключ OpenAI API**"))
+    st.markdown("**🤖 OpenAI API Key**")
     st.session_state["OPENAI_API_KEY"] = st.text_input(
         "OpenAI API Key", 
         type="password",
@@ -1839,7 +1664,7 @@ with st.sidebar:
         placeholder="sk-..."
     )
     
-    st.markdown(bi("**🌐 Tavily API Key**", "**🌐 Ключ Tavily API**"))
+    st.markdown("**🌐 Tavily API Key**")
     st.session_state["TAVILY_API_KEY"] = st.text_input(
         "Tavily API Key (opsiyonel)", 
         type="password",
@@ -1850,7 +1675,14 @@ with st.sidebar:
     
     # Sidebar alt bilgi
     st.markdown("---")
-    # Alt bilgi kaldırıldı (tekrarlı sürüm gösterimini sadeleştiriyoruz)
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem; background: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
+        <p style="margin: 0; font-size: 0.8rem; color: #6c757d;">
+            🏗️ Betonarme Hesaplama Modülü<br>
+            <strong>v1.0.0</strong>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Modern başlık
 st.markdown("""
@@ -1863,601 +1695,232 @@ st.markdown("""
 st.markdown("""
 <div style="text-align: center; margin-bottom: 2rem;">
     <p style="font-size: 1.2rem; color: #666; font-weight: 500;">
-        🎯 Normalize Edilmiş Normlar  🌍 RUS/SNG/VKS Algorıtmaları  💰 Gayriresmî/Elden Vergisiz Kısım Dahil  📊 Sorumluluk Matrisi  🎓 RAG GPT Eğitim Sistemi  🧠 GPT Dev Console
+        🎯 Normalize Edilmiş Normlar  🌍 RUS/SNG/VKS Algorıtmaları  💰 Prim (Elden) Vergisiz Kısım Dahil  📊 Sorumluluk Matrisi  🎓 RAG GPT Eğitim Sistemi  🧠 GPT Dev Console
     </p>
 </div>
 """, unsafe_allow_html=True)
 
 # ---------- Modern Sekmeler ----------
-tab_mantik, tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonuclar, tab_asistan, tab_import = st.tabs([
-    f"🧮 {bi('Mantık','Методология')}",
-    f"⚙️ {bi('Sabitler','Константы')}",
-    f"🚀 {bi('Genel','Общие')}", 
-    f"🧩 {bi('Eleman & Metraj','Эл. и объёмы')}", 
-    f"👥 {bi('Roller','Роли')}", 
-    f"💰 {bi('Giderler','Затраты')}", 
-    f"📋 {bi('Matris','Матрица')}", 
-    f"📊 {bi('Sonuçlar','Результаты')}", 
-    f"🤖 {bi('Asistan','Ассистент')}",
-    f"📥 {bi('Import','Импорт')}"
+tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonuclar, tab_asistan = st.tabs([
+    "⚙️ Sabitler",
+    "🚀 Genel", 
+    "🧩 Eleman & Metraj", 
+    "👥 Roller", 
+    "💰 Giderler", 
+    "📋 Sorumluluk Matrisi", 
+    "📊 Sonuçlar", 
+    "🤖 Asistan (GPT + RAG + Dev)"
 ])
-with tab_mantik:
-    bih("🧮 Hesap Mantığı ve Metodoloji","🧮 Методология расчёта", level=3)
-    bitr("Bu bölüm, yazılımın neyi, nasıl ve hangi sırayla hesapladığını en sade haliyle açıklar.",
-         "Этот раздел простыми словами объясняет, что и как считает программа.")
 
-    # 1) Terminoloji
-    bih("1) Terminoloji","1) Термины", level=4)
-    st.markdown(
-        """
-        - **N**: Net maaş (çalışanın eline geçen, aylık)
-        - **G**: Resmi brüt (aylık)
-        - **r_NDFL**: Gelir vergisi oranı. 2025 için artan kademeli (rezident): 13/15/18/20/22
-        - **OPS/OSS/OMS**: Emeklilik/Sosyal/Sağlık işveren prim oranları (yalnız resmi brüte)
-        - **НСиПЗ**: İş kazası/meslek hastalığı primi (işveren)
-        - **B_SNG**, **B_TUR**: Resmi brüt tavanları (SNG ve VKS için)
-        - **P**: Patent aylık sabit bedeli (SNG)
-        - **k_cash**: Elden kısım komisyon oranı
-        - **E**: Elden (resmi tavanın üstü) kısım (varsa)
-        - **extras**: Kişi başı sabit ekstralar (yemek, barınma vb., KDV uygun şekilde ayrıştırılır)
-        """
-    )
-
-    # 2) Net→Brüt (artan NDFL)
-    bih("2) Net → Brüt (Artan NDFL 2025)", "2) Нет → Брутто (прогрессивный НДФЛ 2025)", level=4)
-    st.markdown(
-        """
-        - Aylık net, yıllıklaştırılır: 12 × N.
-        - 2025 kademeleri (rezident): 2.4M/5M/20M/50M (₽) eşikleri, oranlar 13/15/18/20/22.
-        - Yıllık netten yıllık brüte, her kademedeki net=brüt×(1−r) ilişkisiyle ters gidilerek ulaşılır; aylık brüt = yıllık brüt ÷ 12.
-        - Bu mantık hem SNG (patent) hem VKS (TR) için uygulanır.
-        """
-    )
-
-    # 3) SNG (patent) maliyeti
-    bih("3) SNG (Patent) — İşveren Maliyeti","3) СНГ (патент) — затраты работодателя", level=4)
-    st.markdown(
-        """
-        1) Netten brüte: G = ProgressiveInverse(12×N)/12.
-        2) Resmi brüt ve elden:
-           - G_official = min(G, B_SNG)
-           - E = max(G − B_SNG, 0)
-        3) Komisyon: C = E × k_cash
-        4) İşveren primli resmi kısım: G_official × (1 + OPS + OSS + OMS + НСиПЗ)
-        5) Toplam işveren maliyeti (SNG):
-        """
-    )
-    st.latex(r"\text{Cost}_{SNG} = G_{off}\,(1+OPS+OSS+OMS+HS) + P + extras + E + C")
-    st.markdown("Burada HS = НСиПЗ. Not: P (patent) NDFL'den mahsup edilmez — sabit gider olarak eklenir.")
-
-    # 4) VKS (TR) maliyeti
-    bih("4) VKS (TR) — İşveren Maliyeti","4) ВКС (Турция) — затраты работодателя", level=4)
-    st.markdown(
-        """
-        1) Netten brüte: G = ProgressiveInverse(12×N)/12.
-        2) Resmi brüt ve elden:
-           - G_official = min(G, B_TUR)
-           - E = max(G − B_TUR, 0)
-        3) Komisyon: C = E × k_cash (VKS için kullanılmıyorsa 0)
-        4) İşveren primleri: yalnız НСиПЗ
-        """
-    )
-    st.latex(r"\text{Cost}_{VKS} = G_{off}\,(1+HS) + extras + E + C")
-
-    # 5) Ülke karması (role bazında)
-    bih("5) Ülke Karması (Rol bazında)","5) Смешение стран (по роли)", level=4)
-    st.markdown(
-        """
-        Her rol satırı için ülke payları yüzdesel olarak verilir ve 1'e normalize edilir.
-        """
-    )
-    st.latex(r"\text{Cost}_{per\,person} = p_{RUS}\,Cost_{RUS} + p_{SNG}\,Cost_{SNG} + p_{TUR}\,Cost_{VKS}")
-
-    # 6) Normlar, senaryo ve zorluk
-    bih("6) Normlar, Senaryo ve Zorluk","6) Нормы, сценарий и сложность", level=4)
-    st.markdown(
-        """
-        - Temel norm (senaryo = Gerçekçi) eleman "Temel" için n_ref alınır.
-        - Seçilen senaryonun "Temel" değeri ile oranlanarak senaryo çarpanı s hesaplanır.
-        - Eleman göreli katsayıları k_e normalize edilerek ortalaması 1 yapılır.
-        - Zorluk çarpanı z, girilen faktörlerden çarpımla oluşur: z = ∏(1+f_i).
-        - Eleman normu: n_e = n_ref × s × k_e × z.
-        """
-    )
-    st.latex(r"n_e = n_{ref} \times s \times k_e \times z")
-
-    # 7) Çekirdek işçilik ve giderlerin eklenmesi
-    bih("7) Çekirdek İşçilik ve Giderlerin Eklenmesi","7) Ядро и добавление затрат", level=4)
-    st.markdown(
-        """
-        - Çekirdek işçilik (maliyet): seçili elemanların metrajı ve n_e kullanılarak toplanır.
-        - Sarf (%), Genel Gider (%) ve Indirect (%) oranları sırasıyla uygulanır. Genel Gider için üst sınır (OVERHEAD_RATE_MAX) korunur.
-        """
-    )
-
-    # 7.1) Metraj ve Adam-saat adım adım
-    bih("7.1) Metraj ve Adam-saat","7.1) Объёмы и человеко-часы", level=5)
-    st.markdown(
-        """
-        - Eleman e için metraj m_e (m³) ve norm n_e (a·s/m³) ise toplam adam-saat: A = Σ_e m_e × n_e.
-        - Bir kişinin aylık çalışabileceği saat: H = gün/say × saat/gün. Uygulamada H = ortalama_iş_günü × hours_per_day.
-        - Toplam kişi-ay: PM = A / H.
-        - Kişi başı aylık maliyet (extras dahil) → (₽/saat) cinsinden fiyat = (M_with) / H.
-        - Çekirdek m³ maliyeti: core_price = (M_with / H) × n_e.
-        """
-    )
-    st.latex(r"A = \sum_e m_e\, n_e\quad ;\quad H = D_{avg}\,h_d\quad ;\quad PM = \dfrac{A}{H}")
-    st.latex(r"\text{core\_price}_e = \left(\dfrac{M_{with}}{H}\right) \times n_e")
-
-    # 7.2) Gider dağıtım formülleri
-    bih("7.2) Gider Dağıtımı ve Toplamlar","7.2) Распределение затрат и итоги", level=5)
-    st.markdown(
-        """
-        - Çekirdek + Genel: core_genel_e = core_price_e × (1 + genel_oran)
-        - Sarf toplamı: S = (Σ_e core_genel_e × m_e) × consumables_oran
-        - Indirect toplamı: I = (Σ_e core_genel_e × m_e + S) × indirect_oran
-        - Eleman e'ye dağıtım ağırlığı: w_e = (core_genel_e × m_e) / Σ_e (core_genel_e × m_e)
-        - Eleman e toplam (₽/m³): total_e = core_price_e + genel_e + sarf_e + indirect_e
-        """
-    )
-    st.latex(r"\text{genel\_e} = \min(\text{overhead\_rate}, \text{max})\times \text{core\_price}_e")
-    st.latex(r"S = \left(\sum_e (\text{core\_price}_e+\text{genel}_e) m_e\right) \times c_{sarf}")
-    st.latex(r"I = \left(\sum_e (\text{core\_price}_e+\text{genel}_e) m_e + S\right) \times c_{indir}")
-    st.latex(r"w_e = \dfrac{(\text{core\_price}_e+\text{genel}_e) m_e}{\sum_e (\text{core\_price}_e+\text{genel}_e) m_e}")
-    st.latex(r"\text{total}_e = \text{core\_price}_e + \text{genel}_e + w_e\, \dfrac{S}{m_e} + w_e\, \dfrac{I}{m_e}")
-
-    # 8) Mantık kontrolleri
-    bih("8) Mantık Kontrolleri","8) Логические проверки", level=4)
-    st.markdown(
-        """
-        - Artan NDFL tersine çevirme hem SNG hem VKS için aynı yöntemle yapılır.
-        - SNG'de patent, vergiden mahsup edilmez; bilinçli basitleştirme. İleride istenirse anahtarla açılabilir.
-        - VKS'de yalnız НСиПЗ uygulanır; SNG'de tüm sosyal primler resmi brüte uygulanır.
-        - Ülke karması yüzdeleri her satırda normalize edilir (toplam 1 olur).
-        - Genel gider üst sınırı uygulanır; UI'da da aynı sınır uyarılır.
-        """
-    )
-
-    # 9) Basit anlatım (mühendis olmayanlar için)
-    bih("9) Basit Anlatım (Mühendis Olmayanlar İçin)","9) Простое объяснение (для неинженеров)", level=4)
-    st.markdown(
-        """
-        - Önce çalışanın eline geçen net maaşı (N) alıyoruz. Bunu yıllığa çeviriyoruz (12×N).
-        - Devletin belirlediği vergi dilimlerine göre (2025 için 13/15/18/20/22%) bu yıllık neti geriye doğru **brüte** çeviriyoruz. Yani "brütün vergisi düşülünce net şu olsun" diye ters hesap yapıyoruz.
-        - Aylık resmi brütü (G) bulunca işverenin ödeyeceği sigorta primlerini hesaplıyoruz.
-            - SNG için: emeklilik (OPS), sosyal (OSS), sağlık (OMS) ve iş kazası (НСиПЗ) resmi brüt üzerinden.
-            - VKS (Türk) için: sadece iş kazası (НСиПЗ).
-        - SNG'de resmi brüt için bir **tavan** var. Brüt bu tavanı aşarsa, aşan kısım **elden** sayılır. Eldene vergi/prim eklemiyoruz; sadece nakit maliyeti ve varsa küçük bir komisyon (kasa/kur/çekim riskleri) ekleniyor.
-        - SNG'de her çalışan için aylık **patent** sabit bedeli var. Bu bedeli ayrıca ekliyoruz (vergiden düşmüyoruz; sizin isteğinizle sade model).
-        - Kişi başına bu maliyeti bulduktan sonra, seçili elemanlar için kaç **adam-saat** gerektiğini hesaplıyoruz (metraj × norm). Bir kişinin ayda kaç saat çalışabileceğini varsayarak toplam **kişi-ay** ihtiyacını buluyoruz.
-        - Kişi saat maliyetini normlarla çarparak m³ başına çekirdek maliyeti buluyoruz. Sonra üzerine **genel gider**, **sarf** ve **indirect** oranlarını ekleyip toplam m³ maliyetini elde ediyoruz.
-        """
-    )
-
-    # 10) Örnek hesap (basitleştirilmiş, rakamlar temsili)
-    bih("10) Örnek Hesap (Basitleştirilmiş)","10) Пример расчёта (упрощённый)", level=4)
-    st.markdown(
-        """
-        Varsayımlar:
-        - Net maaş N = 100.000 ₽/ay (VKS).
-        - НСиПЗ = %1,8, diğer sosyal primler = 0 (VKS olduğu için).
-        - Günlük çalışma saati = 10; ayda ortalama iş günü ≈ 22 → H ≈ 220 saat/kişi·ay.
-        - Eleman: Temel, norm n_e = 16 a·s/m³, metraj m = 100 m³.
-
-        Adımlar:
-        1) Net→Brüt (artan): yıllık net = 1.200.000; dillere göre ters çevirerek yaklaşık aylık brüt G ≈ 115.000 ₽.
-        2) İşveren maliyeti (VKS): G × (1+НСиПЗ) ≈ 115.000 × 1.018 ≈ 117.070 ₽ (extras hariç).
-        3) Kişi saat maliyeti ≈ 117.070 / 220 ≈ 532 ₽/saat.
-        4) Çekirdek m³ maliyeti: core_price = 532 × 16 ≈ 8.512 ₽/m³.
-        5) Genel gider %15 ise: 8.512 × 0,15 ≈ 1.277 ₽/m³.
-        6) Sarf %5 ise: (8.512+1.277) × 0,05 ≈ 494 ₽/m³.
-        7) Indirect %12 ise: (8.512+1.277+0.494) × 0,12 ≈ 1.275 ₽/m³.
-        8) Toplam ≈ 8.512 + 1.277 + 0.494 + 1.275 ≈ 11.558 ₽/m³.
-
-        Not: Bu örnek temsilidir; uygulamadaki değeri senaryolar, zorluk, rollerin ülke karması, patent ve ekstralar etkiler.
-        """
-    )
-
-    # 11) İnfografik stil ve PDF indirme
-    bih("11) Görsel Yardımlar ve Çıktı","11) Визуальные подсказки и выгрузка", level=4)
-    st.markdown(
-        """
-        - Aşağıdaki kutucuklar, akışın hangi adımlardan geçtiğini özetler.
-        - İstersen raporu PDF olarak indirebilirsin.
-        """
-    )
-
-    st.markdown(
-        """
-        <div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px'>
-          <div style='border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff'>
-            <div class='badge'>1</div>
-            <div><b>Net → Brüt</b></div>
-            <div>Artan NDFL ile tersine çevirme</div>
-          </div>
-          <div style='border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff'>
-            <div class='badge'>2</div>
-            <div><b>İşveren Primleri</b></div>
-            <div>OPS/OSS/OMS/НСиПЗ (profile göre)</div>
-          </div>
-          <div style='border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff'>
-            <div class='badge'>3</div>
-            <div><b>Adam-saat</b></div>
-            <div>Metraj × norm → kişi-ay</div>
-          </div>
-          <div style='border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff'>
-            <div class='badge'>4</div>
-            <div><b>m³ Çekirdek</b></div>
-            <div>Saat maliyeti × norm</div>
-          </div>
-          <div style='border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#fff'>
-            <div class='badge'>5</div>
-            <div><b>Giderler</b></div>
-            <div>Genel + Sarf + Indirect</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Basit PDF (markdown → bytes) indirme — kısa açıklama export
-    cpdf1, cpdf2 = st.columns([1,1])
-    with cpdf1:
-        if st.button("📄 Hesap Mantığını PDF indir (kısa)"):
-            try:
-                from io import BytesIO
-                buf = BytesIO()
-                content = "Hesap Mantığı — kısa özet\n\nNet→Brüt (artan NDFL), işveren primleri, adam-saat, m³ çekirdek ve gider dağıtımı adımları bu sürümde özetlenmiştir."
-                buf.write(content.encode("utf-8"))
-                st.download_button("İndir", data=buf.getvalue(), file_name="hesap_mantigi_ozet.txt", mime="text/plain")
-            except Exception as e:
-                st.warning(f"PDF yerine metin çıktı üretildi: {e}")
-
+# ==================== 0) SABİTLER ====================
 with tab_sabitler:
-    # RUSYA GRUBU
-    with st.expander("Rusya Vatandaşları (RU) / Граждане РФ", expanded=False):
-        st.markdown('<div class="const-grid">', unsafe_allow_html=True)
-        
-        # NDFL RUS
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">💰 Gelir Vergisi (НДФЛ)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Rusya gelir vergisi oranı</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("NDFL_RUS", NDFL_RUS)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_ndfl_rus = st.toggle("Düzenle", key="edit_NDFL_RUS")
-        if edit_ndfl_rus:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_NDFL_RUS", ratio_to_pct(eff("NDFL_RUS", NDFL_RUS)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_NDFL_RUS")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_NDFL_RUS"):
-                    OVR["NDFL_RUS"] = pct_to_ratio(st.session_state["inp_NDFL_RUS"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_NDFL_RUS"):
-                    del st.session_state["inp_NDFL_RUS"]
-                    st.session_state["edit_NDFL_RUS"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # OPS RUS
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">🏛️ Emeklilik (ОПС)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Emeklilik sigortası primi</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("OPS", OPS)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_ops = st.toggle("Düzenle", key="edit_OPS")
-        if edit_ops:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_OPS", ratio_to_pct(eff("OPS", OPS)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_OPS")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_OPS"):
-                    OVR["OPS"] = pct_to_ratio(st.session_state["inp_OPS"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_OPS"):
-                    del st.session_state["inp_OPS"]
-                    st.session_state["edit_OPS"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # OSS RUS
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">🛡️ Sosyal Sigorta (ОСС)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Sosyal sigorta primi</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("OSS", OSS)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_oss = st.toggle("Düzenle", key="edit_OSS")
-        if edit_oss:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_OSS", ratio_to_pct(eff("OSS", OSS)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_OSS")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_OSS"):
-                    OVR["OSS"] = pct_to_ratio(st.session_state["inp_OSS"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_OSS"):
-                    del st.session_state["inp_OSS"]
-                    st.session_state["edit_OSS"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # OMS RUS
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">🏥 Sağlık (ОМС)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Sağlık sigortası primi</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("OMS", OMS)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_oms = st.toggle("Düzenle", key="edit_OMS")
-        if edit_oms:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_OMS", ratio_to_pct(eff("OMS", OMS)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_OMS")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_OMS"):
-                    OVR["OMS"] = pct_to_ratio(st.session_state["inp_OMS"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_OMS"):
-                    del st.session_state["inp_OMS"]
-                    st.session_state["edit_OMS"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # NSIPZ RUS
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">⚠️ İş Kazası (НСИПЗ)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">İş kazası risk primi</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("NSIPZ_RISK_RUS_SNG", NSIPZ_RISK_RUS_SNG)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_nsipz_rus = st.toggle("Düzenle", key="edit_NSIPZ_RUS_SNG")
-        if edit_nsipz_rus:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_NSIPZ_RUS_SNG", ratio_to_pct(eff("NSIPZ_RISK_RUS_SNG", NSIPZ_RISK_RUS_SNG)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_NSIPZ_RUS_SNG")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_NSIPZ_RUS_SNG"):
-                    OVR["NSIPZ_RISK_RUS_SNG"] = pct_to_ratio(st.session_state["inp_NSIPZ_RUS_SNG"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_NSIPZ_RUS_SNG"):
-                    del st.session_state["inp_NSIPZ_RUS_SNG"]
-                    st.session_state["edit_NSIPZ_RUS_SNG"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Yardımcı fonksiyonlar
+    def pct_to_ratio(x): return float(x)/100.0
+    def ratio_to_pct(x): return float(x)*100.0
     
-    # SNG GRUBU
-    with st.expander("SNG Vatandaşları / Граждане СНГ", expanded=False):
-        st.markdown('<div class="const-grid">', unsafe_allow_html=True)
-        
-        # NDFL SNG
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">💰 Gelir Vergisi (СНГ)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">SNG gelir vergisi oranı</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("NDFL_SNG", NDFL_SNG)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_ndfl_sng = st.toggle("Düzenle", key="edit_NDFL_SNG")
-        if edit_ndfl_sng:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_NDFL_SNG", ratio_to_pct(eff("NDFL_SNG", NDFL_SNG)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_NDFL_SNG")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_NDFL_SNG"):
-                    OVR["NDFL_SNG"] = pct_to_ratio(st.session_state["inp_NDFL_SNG"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_NDFL_SNG"):
-                    del st.session_state["inp_NDFL_SNG"]
-                    st.session_state["edit_NDFL_SNG"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Patent SNG
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">📋 Aylık Patent (Патент)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Aylık patent ödemesi</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{eff("SNG_PATENT_MONTH", SNG_PATENT_MONTH):,.0f} ₽</div>', unsafe_allow_html=True)
-        
-        edit_patent_sng = st.toggle("Düzenle", key="edit_SNG_PATENT")
-        if edit_patent_sng:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_SNG_PATENT", eff("SNG_PATENT_MONTH", SNG_PATENT_MONTH))
-            st.number_input("₽/ay", min_value=0.0, step=100.0, value=cur_val, key="inp_SNG_PATENT")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_SNG_PATENT"):
-                    OVR["SNG_PATENT_MONTH"] = st.session_state["inp_SNG_PATENT"]
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_SNG_PATENT"):
-                    del st.session_state["inp_SNG_PATENT"]
-                    st.session_state["edit_SNG_PATENT"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Taxed Base SNG
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">🏛️ Resmi Brüt Tavan (Официальная минимальная заработная плата)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Resmi brüt maaş tavanı</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{eff("SNG_TAXED_BASE", SNG_TAXED_BASE):,.0f} ₽</div>', unsafe_allow_html=True)
-        
-        edit_base_sng = st.toggle("Düzenle", key="edit_SNG_BASE")
-        if edit_base_sng:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_SNG_BASE", eff("SNG_TAXED_BASE", SNG_TAXED_BASE))
-            st.number_input("₽/ay", min_value=0.0, step=1000.0, value=cur_val, key="inp_SNG_BASE")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_SNG_BASE"):
-                    OVR["SNG_TAXED_BASE"] = st.session_state["inp_SNG_BASE"]
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_SNG_BASE"):
-                    del st.session_state["inp_SNG_BASE"]
-                    st.session_state["edit_SNG_BASE"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Cash Commission (bilgi kartı)
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">💳 Elden Ödeme Komisyonu (Комиссия)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Elden ödeme komisyon oranı</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("CASH_COMMISSION_RATE", CASH_COMMISSION_RATE)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_cash_commission = st.toggle("Düzenle", key="edit_CASH_COMMISSION")
-        if edit_cash_commission:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_CASH_COMMISSION", ratio_to_pct(eff("CASH_COMMISSION_RATE", CASH_COMMISSION_RATE)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_CASH_COMMISSION")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_CASH_COMMISSION"):
-                    OVR["CASH_COMMISSION_RATE"] = pct_to_ratio(st.session_state["inp_CASH_COMMISSION"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_CASH_COMMISSION"):
-                    del st.session_state["inp_CASH_COMMISSION"]
-                    st.session_state["edit_CASH_COMMISSION"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Override sistemi
+    OVR = st.session_state.setdefault("CONST_OVERRIDES", {})
+    def eff(name, default): return OVR.get(name, default)
     
-    # TÜRK GRUBU
-    with st.expander("Türk Vatandaşları (VKS) / Граждане Турции (ВКС)", expanded=False):
-        st.markdown('<div class="const-grid">', unsafe_allow_html=True)
+    # Global sabitler (default değerler)
+    NDFL_RUS = 0.130
+    NDFL_SNG = 0.130
+    NDFL_TUR = 0.000
+    OPS = 0.220
+    OSS = 0.029
+    OMS = 0.051
+    NSIPZ_RISK_RUS_SNG = 0.009
+    NSIPZ_RISK_TUR_VKS = 0.018
+    SNG_PATENT_MONTH = 7000.0
+    SNG_TAXED_BASE = 33916.0
+    TUR_TAXED_BASE = 167000.0
+    CASH_COMMISSION_RATE = 0.235
+    
+    # Kompakt kart ızgarası CSS
+    st.markdown("""
+    <style>
+    .const-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+        margin: 1rem 0;
+    }
+    .const-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 12px;
+        background: #fff;
+        transition: all 0.2s ease;
+    }
+    .const-card:hover {
+        border-color: #007bff;
+        box-shadow: 0 2px 8px rgba(0, 123, 255, 0.1);
+    }
+    .const-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #f1f5f9;
+        font-size: 12px;
+        margin-left: 6px;
+        color: #374151;
+        font-weight: 500;
+    }
+    .const-header {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        padding: 0.8rem 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        border: 1px solid #dee2e6;
+    }
+    .const-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 0.5rem;
+    }
+    .const-subtitle {
+        font-size: 0.8rem;
+        color: #6c757d;
+        font-style: italic;
+    }
+    .card-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 0.3rem;
+    }
+    .card-desc {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+    }
+    .card-value {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #333;
+        background: #f8f9fa;
+        padding: 0.4rem 0.6rem;
+        border-radius: 6px;
+        border: 1px solid #dee2e6;
+        text-align: center;
+        margin: 0.5rem 0;
+    }
+    .edit-area {
+        background: #f8f9fa;
+        border: 1px solid #007bff;
+        border-radius: 6px;
+        padding: 0.6rem;
+        margin-top: 0.5rem;
+    }
+    .button-row {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+    .override-badge {
+        display: inline-block;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        background: #e7f3ff;
+        color: #0056b3;
+        font-size: 0.7rem;
+        margin: 0.2rem;
+        border: 1px solid #b3d9ff;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Üst özet şeridi
+    st.markdown('<div class="const-header">', unsafe_allow_html=True)
+    st.markdown('<div class="const-title">⚙️ Sistem Sabitleri</div>', unsafe_allow_html=True)
+    st.markdown('<div class="const-subtitle">Bu grup değişiklikleri yalnız bu oturum için geçerlidir (runtime override).</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Override badge'leri
+    if OVR:
+        st.markdown("**Uygulanan Override'lar:**")
+        for k, v in OVR.items():
+            if isinstance(v, float):
+                if v < 1.0:  # Oran
+                    display_val = f"{ratio_to_pct(v):.2f}%"
+                else:  # Ruble
+                    display_val = f"{v:,.0f} ₽"
+            else:
+                display_val = str(v)
+            st.markdown(f'<span class="override-badge">{k}: {display_val}</span>', unsafe_allow_html=True)
         
-        # NDFL TUR
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">💰 Gelir Vergisi (Турция ВКС)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Türkiye gelir vergisi oranı</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("NDFL_TUR", NDFL_TUR)):.2f}%</div>', unsafe_allow_html=True)
-        # Progressive modda açıklama: bu alan sadece sabit oran modunda kullanılır
-        if bool(st.session_state.get("use_progressive_ndfl", True)):
-            st.caption(bi("(Artan NDFL aktif — bu oran yalnız 'sabit oran' modu kapalıyken kullanılır)",
-                        "(Включён прогрессивный НДФЛ — эта ставка используется только при выключенном режиме фиксированной ставки)"))
-        
-        edit_ndfl_tur = st.toggle("Düzenle", key="edit_NDFL_TUR")
-        if edit_ndfl_tur:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_NDFL_TUR", ratio_to_pct(eff("NDFL_TUR", NDFL_TUR)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_NDFL_TUR")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_NDFL_TUR"):
-                    OVR["NDFL_TUR"] = pct_to_ratio(st.session_state["inp_NDFL_TUR"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_NDFL_TUR"):
-                    del st.session_state["inp_NDFL_TUR"]
-                    st.session_state["edit_NDFL_TUR"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # NSIPZ TUR
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">⚠️ İş Kazası (НСИПЗ)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">İş kazası risk primi</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{ratio_to_pct(eff("NSIPZ_RISK_TUR_VKS", NSIPZ_RISK_TUR_VKS)):.2f}%</div>', unsafe_allow_html=True)
-        
-        edit_nsipz_tur = st.toggle("Düzenle", key="edit_NSIPZ_TUR_VKS")
-        if edit_nsipz_tur:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_NSIPZ_TUR_VKS", ratio_to_pct(eff("NSIPZ_RISK_TUR_VKS", NSIPZ_RISK_TUR_VKS)))
-            st.number_input("%", min_value=0.0, max_value=100.0, step=0.1, value=cur_val, key="inp_NSIPZ_TUR_VKS")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_NSIPZ_TUR_VKS"):
-                    OVR["NSIPZ_RISK_TUR_VKS"] = pct_to_ratio(st.session_state["inp_NSIPZ_TUR_VKS"])
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_NSIPZ_TUR_VKS"):
-                    del st.session_state["inp_NSIPZ_TUR_VKS"]
-                    st.session_state["edit_NSIPZ_TUR_VKS"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Taxed Base TUR
-        st.markdown('<div class="const-card">', unsafe_allow_html=True)
-        st.markdown('<div class="card-title">🏛️ Resmi Brüt Tavan (Официальная минимальная заработная плата)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="card-desc">Resmi brüt maaş tavanı</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="card-value">{eff("TUR_TAXED_BASE", TUR_TAXED_BASE):,.0f} ₽</div>', unsafe_allow_html=True)
-        
-        edit_base_tur = st.toggle("Düzenle", key="edit_TUR_BASE")
-        if edit_base_tur:
-            st.markdown('<div class="edit-area">', unsafe_allow_html=True)
-            cur_val = st.session_state.get("inp_TUR_BASE", eff("TUR_TAXED_BASE", TUR_TAXED_BASE))
-            st.number_input("₽/ay", min_value=0.0, step=1000.0, value=cur_val, key="inp_TUR_BASE")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Kaydet", key="save_TUR_BASE"):
-                    OVR["TUR_TAXED_BASE"] = st.session_state["inp_TUR_BASE"]
-                    st.rerun()
-            with col2:
-                if st.button("Vazgeç", key="cancel_TUR_BASE"):
-                    del st.session_state["inp_TUR_BASE"]
-                    st.session_state["edit_TUR_BASE"] = False
-                    st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-# ==================== 1B) ADAM-SAAT NORMLARI (ayrı başlık) ====================
-with tab_genel:
-    with st.expander("👷‍♂️ Adam-saat Normları (Senaryolar) / 👷‍♂️ Нормы трудозатрат (сценарии)", expanded=False):
-        st.caption(bi("Senaryolara göre eleman bazında a·s/m³ normlarını düzenleyin. Boş bırakılanlar varsayılanı kullanır.",
-                      "Редактируйте нормы a·ч/м³ по элементам для каждого сценария. Пустые — по умолчанию."))
-        norms_map = get_effective_scenario_norms()
-        scenarios = ["İdeal","Gerçekçi","Kötü"]
-        elements_tr = ["Grobeton","Rostverk","Temel","Döşeme","Perde","Merdiven"]
-        import pandas as _pd
-        rows = []
-        for sc in scenarios:
-            base = norms_map.get(sc, SCENARIO_NORMS["Gerçekçi"]) if isinstance(norms_map.get(sc), dict) else SCENARIO_NORMS.get(sc, {})
-            row = {"Senaryo": sc}
-            for et in elements_tr:
-                try:
-                    row[et] = float(base.get(et, SCENARIO_NORMS["Gerçekçi"][et]))
-                except Exception:
-                    row[et] = SCENARIO_NORMS["Gerçekçi"].get(et, 16.0)
-            rows.append(row)
-        df0 = _pd.DataFrame(rows)
-        edited = st.data_editor(df0, hide_index=True, num_rows="fixed")
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button(bi("Kaydet (Normları Override Et)","Сохранить (Override норм)")):
-                new_map = {}
-                for _, r in edited.iterrows():
-                    sc = str(r["Senaryo"]) if r.get("Senaryo") in scenarios else None
-                    if not sc: continue
-                    new_map[sc] = {et: float(r.get(et, SCENARIO_NORMS[sc][et])) for et in elements_tr}
-                st.session_state["SCENARIO_NORMS_OVR"] = new_map
-                st.success(bi("Adam-saat normları güncellendi.","Нормы трудозатрат обновлены."))
+            if st.button("Tümü Sıfırla", type="secondary"):
+                st.session_state["CONST_OVERRIDES"] = {}
+                st.rerun()
         with col2:
-            if st.button(bi("Override'ı Temizle","Сброс Override")):
-                st.session_state.pop("SCENARIO_NORMS_OVR", None)
-                st.info(bi("Override temizlendi. Varsayılan normlar kullanılacak.","Сброшено. Будут использоваться нормы по умолчанию."))
+            st.caption("💡 Override'ları sıfırlamak için butona tıklayın.")
+    else:
+        st.info("ℹ️ Henüz hiçbir override uygulanmamış. Varsayılan değerler kullanılıyor.")
+    
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+# ==================== 1) GENEL ====================
+with tab_genel:
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state["prim_sng"] = st.checkbox(
+            "SNG için prim/komisyon uygula", value=st.session_state.get("prim_sng", True)
+        )
+    with col2:
+        st.session_state["prim_tur"] = st.checkbox(
+            "Türk (VKS) için prim/komisyon uygula", value=st.session_state.get("prim_tur", True)
+        )
+    st.caption("ℹ️ ‘Prim' (elden/cash) **hiçbir vergi/prim içermez**; yalnızca komisyon uygulanır. Resmi brüt kısma OPS/OSS/OMS + НСиПЗ (VKS'de yalnız НСиПЗ).")
+
+    cA, cB = st.columns(2)
+    with cA:
+        st.session_state["start_date"] = st.date_input(
+            "Başlangıç", value=st.session_state.get("start_date", date.today().replace(day=1)), key="start_date_inp"
+        )
+    with cB:
+        st.session_state["end_date"] = st.date_input(
+            "Bitiş", value=st.session_state.get("end_date", date.today().replace(day=30)), key="end_date_inp"
+        )
+    
+
+    
+
+
+    holiday_options=[("Hiç tatil yok (7/7)","tam_calisma"),
+                     ("Her Pazar tatil (6/7)","her_pazar"),
+                     ("Her Cmt+Paz tatil (5/7)","hafta_sonu_tatil"),
+                     ("2 haftada 1 Pazar tatil","iki_haftada_bir_pazar")]
+    sel = st.selectbox("Tatil günleri", [h[0] for h in holiday_options],
+                       index= st.session_state.get("holiday_idx",1), key="holiday_selbox")
+    st.session_state["holiday_idx"] = [h[0] for h in holiday_options].index(sel)
+    st.session_state["holiday_mode"] = dict(holiday_options)[sel]
+    
+
+    
+    # Tatil günleri değişikliğinde hesaplamaları güncelle
+    current_holiday_mode = dict(holiday_options)[sel]
+    if st.session_state.get("holiday_mode") != current_holiday_mode:
+        st.session_state["holiday_mode"] = current_holiday_mode
+        # Hesaplamaları güncelle
+        st.session_state["_holiday_mode_changed"] = True
+        # Sayfayı yenile ki hesaplamalar güncellensin
+        st.rerun()
+
+    cC, cD = st.columns(2)
+    with cC:
+        # Günlük çalışma saati - basit widget, session_state otomatik güncellenir
+        st.session_state["hours_per_day"] = st.number_input(
+            "Günlük çalışma saati", min_value=6.0, max_value=16.0, value=10.0, step=0.5, key="hours_per_day_inp"
+        )
+    with cD:
+        st.session_state["scenario"] = st.selectbox(
+            "👷‍♂️ Adam-saat senaryosu", ["İdeal","Gerçekçi","Kötü"],
+            index=["İdeal","Gerçekçi","Kötü"].index(st.session_state.get("scenario","Gerçekçi")),
+            key="scenario_sel"
+        )
 
     ### ✅ Çevresel/Zorluk Faktörleri — norm çarpanı
     def render_difficulty_block():
@@ -2621,7 +2084,7 @@ with tab_genel:
 
 # ==================== 2) ELEMAN & METRAJ ====================
 with tab_eleman:
-    bih("🧩 Betonarme Elemanları","🧩 Элементы монолитных работ", level=3)
+    st.markdown("### 🧩 Betonarme Elemanları")
     cols = st.columns(3)
     sel_flags={}
     for i,k in enumerate(CANON_KEYS):
@@ -2629,11 +2092,10 @@ with tab_eleman:
             sel_flags[k]=st.checkbox(LABELS[k], value=st.session_state.get(f"sel_{k}", True), key=f"sel_{k}")
     selected_elements=[k for k,v in sel_flags.items() if v]
     if not selected_elements:
-        st.warning(bi("En az bir betonarme eleman seçin.", "Выберите хотя бы один элемент."))
+        st.warning("En az bir betonarme eleman seçin.")
 
-    bih("📏 Metraj","📏 Объёмы", level=3)
-    use_metraj = st.checkbox(bi("Eleman metrajlarım mevcut, girmek istiyorum",
-                                 "У меня есть объёмы по элементам, хочу ввести"),
+    st.markdown("### 📏 Metraj")
+    use_metraj = st.checkbox("Eleman metrajlarım mevcut, girmek istiyorum",
                              value=st.session_state.get("use_metraj", False), key="use_metraj")
     if use_metraj and selected_elements:
         # Metraj tablosu için state kontrolü
@@ -2652,16 +2114,16 @@ with tab_eleman:
                 hide_index=True, 
                 key="metraj_editor_form"
             )
-            if st.form_submit_button(bi("💾 Metraj Kaydet","💾 Сохранить объёмы")):
+            if st.form_submit_button("💾 Metraj Kaydet"):
                 st.session_state["metraj_df"] = edited_metraj
-                st.success(bi("Metraj kaydedildi!","Объёмы сохранены!"))
+                st.success("Metraj kaydedildi!")
             else:
                 # Mevcut değerleri kullan
                 st.session_state["metraj_df"] = edited_metraj
 
 # ==================== 3) ROLLER ====================
 with tab_roller:
-    bih("🛠️ Rol Kompozisyonu (1 m³ için)","🛠️ Состав ролей (на 1 м³)", level=3)
+    st.markdown("### 🛠️ Rol Kompozisyonu (1 m³ için)")
     # Roller tablosu için state kontrolü
     if "roles_df" not in st.session_state:
         st.session_state["roles_df"] = get_default_roles_df()
@@ -2680,15 +2142,15 @@ with tab_roller:
             hide_index=True,
             column_config=col_cfg,
         )
-        if st.form_submit_button(bi("💾 Roller Kaydet","💾 Сохранить роли")):
+        if st.form_submit_button("💾 Roller Kaydet"):
             st.session_state["roles_df"] = edited_roles
-            st.success(bi("Roller kaydedildi!","Роли сохранены!"))
+            st.success("Roller kaydedildi!")
         else:
             # Mevcut değerleri kullan
             st.session_state["roles_df"] = edited_roles
 
     # Varsayılanlara döndür
-    if st.button(bi("↩️ Rolleri varsayılana döndür","↩️ Сбросить роли к значениям по умолчанию")):
+    if st.button("↩️ Rolleri varsayılana döndür"):
         st.session_state["roles_df"]=pd.DataFrame([
             {"Rol (Роль)":"brigadir","Ağırlık (Вес)":0.10,"Net Maaş (₽, na ruki) (Чистая з/п, ₽)":120000,"%RUS":100,"%SNG":0,"%TUR":0},
             {"Rol (Роль)":"kalfa","Ağırlık (Вес)":0.20,"Net Maaş (₽, na ruki) (Чистая з/п, ₽)":110000,"%RUS":20,"%SNG":60,"%TUR":20},
@@ -2702,35 +2164,35 @@ with tab_roller:
 
 # ==================== 4) GİDERLER (sade) ====================
 with tab_gider:
-    bih("👥 Global Kişi Başı (Aylık) Giderler","👥 Глобальные затраты на человека (в месяц)", level=3)
+    st.markdown("### 👥 Global Kişi Başı (Aylık) Giderler")
     c1,c2,c3 = st.columns(3)
     with c1:
         # Yemek
-        st.session_state["food"] = st.number_input(bi("🍲 Yemek (₽/ay)","🍲 Питание (₽/мес)"), 0.0, value=10000.0, step=10.0, key="food_inp")
-        st.session_state["food_vat"] = st.checkbox(bi("Yemek KDV dahil mi?","Питание с НДС?"), value=True, key="food_vat_inp")
+        st.session_state["food"] = st.number_input("🍲 Yemek (₽/ay)", 0.0, value=10000.0, step=10.0, key="food_inp")
+        st.session_state["food_vat"] = st.checkbox("Yemek KDV dahil mi?", value=True, key="food_vat_inp")
         
         # PPE
-        st.session_state["ppe"] = st.number_input(bi("🦺 PPE/СИЗ (₽/ay)","🦺 СИЗ (₽/мес)"), 0.0, value=1500.0, step=5.0, key="ppe_inp")
-        st.session_state["ppe_vat"] = st.checkbox(bi("PPE KDV dahil mi?","СИЗ с НДС?"), value=True, key="ppe_vat_inp")
+        st.session_state["ppe"] = st.number_input("🦺 PPE/СИЗ (₽/ay)", 0.0, value=1500.0, step=5.0, key="ppe_inp")
+        st.session_state["ppe_vat"] = st.checkbox("PPE KDV dahil mi?", value=True, key="ppe_vat_inp")
     with c2:
         # Barınma
-        st.session_state["lodging"] = st.number_input(bi("🏠 Barınma (₽/ay)","🏠 Проживание (₽/мес)"), 0.0, value=12000.0, step=10.0, key="lodging_inp")
-        st.session_state["lodging_vat"] = st.checkbox(bi("Barınma KDV dahil mi?","Проживание с НДС?"), value=True, key="lodging_vat_inp")
+        st.session_state["lodging"] = st.number_input("🏠 Barınma (₽/ay)", 0.0, value=12000.0, step=10.0, key="lodging_inp")
+        st.session_state["lodging_vat"] = st.checkbox("Barınma KDV dahil mi?", value=True, key="lodging_vat_inp")
         
         # Eğitim
-        st.session_state["training"] = st.number_input(bi("🎓 Eğitim (₽/ay)","🎓 Обучение (₽/мес)"), 0.0, value=500.0, step=5.0, key="training_inp")
-        st.session_state["training_vat"] = st.checkbox(bi("Eğitim KDV dahil mi?","Обучение с НДС?"), value=True, key="training_vat_inp")
+        st.session_state["training"] = st.number_input("🎓 Eğitim (₽/ay)", 0.0, value=500.0, step=5.0, key="training_inp")
+        st.session_state["training_vat"] = st.checkbox("Eğitim KDV dahil mi?", value=True, key="training_vat_inp")
     with c3:
         # Ulaşım
-        st.session_state["transport"] = st.number_input(bi("🚇 Ulaşım (₽/ay)","🚇 Транспорт (₽/мес)"), 0.0, value=3000.0, step=5.0, key="transport_inp")
-        st.session_state["transport_vat"] = st.checkbox(bi("Ulaşım KDV dahil mi?","Транспорт с НДС?"), value=False, key="transport_vat_inp")
+        st.session_state["transport"] = st.number_input("🚇 Ulaşım (₽/ay)", 0.0, value=3000.0, step=5.0, key="transport_inp")
+        st.session_state["transport_vat"] = st.checkbox("Ulaşım KDV dahil mi?", value=False, key="transport_vat_inp")
         
         # KDV oranı
-        st.session_state["vat_rate"] = st.number_input(bi("KDV oranı (НДС)","Ставка НДС"), min_value=0.0, max_value=0.25, value=0.20, step=0.001, key="vat_rate_inp",
-                                                       help="'KDV dahil' işaretli kalemlerde KDV ayrıştırılır. / Если отмечено 'с НДС', НДС выделяется из суммы.")
+        st.session_state["vat_rate"] = st.number_input("KDV oranı (НДС)", min_value=0.0, max_value=0.25, value=0.20, step=0.001, key="vat_rate_inp",
+                                                       help="Kişi-başı kalemlerde 'KDV dahil' işaretliyse ayrıştırılır.")
 
     # Sarf Grupları
-    with st.expander("🧴 Sarf Grupları — % (seç-belirle) / 🧴 Группы расходников — % (выбрать-настроить)", expanded=False):
+    with st.expander("🧴 Sarf Grupları — % (seç-belirle)", expanded=False):
         if "cons_groups_state" not in st.session_state:
             st.session_state["cons_groups_state"] = {name: {"on": False, "pct": float(p)} for (name,p) in CONSUMABLES_PRESET}
         cons_state = st.session_state["cons_groups_state"]
@@ -2739,17 +2201,17 @@ with tab_gider:
             c1, c2 = st.columns([0.60, 0.40])
             with c1: st.write(name)
             with c2:
-                on = st.checkbox(bi("Aktif","Активно"), value=cons_state[name]["on"], key=f"cg_on_{name}")
-                pct = st.number_input(bi("Etki %","Доля, %"), min_value=0.0, max_value=100.0,
+                on = st.checkbox("Aktif", value=cons_state[name]["on"], key=f"cg_on_{name}")
+                pct = st.number_input("Etki %", min_value=0.0, max_value=100.0,
                                       value=float(cons_state[name]["pct"]), step=0.25, format="%.2f",
                                       key=f"cg_pct_{name}")
                 cons_state[name] = {"on": bool(on), "pct": float(pct)}
                 if on: cons_sum += float(pct)
         st.session_state["_cgroups_total_pct"] = float(cons_sum)
-        st.markdown(f"<div class='badge'>{bi('Seçili toplam:','Выбрано всего:')} <b>{cons_sum:.2f}%</b></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='badge'>Seçili toplam: <b>{cons_sum:.2f}%</b></div>", unsafe_allow_html=True)
 
         # Özel kalemler
-        st.markdown(bi("**➕ Özel sarf kalemleri**","**➕ Пользовательские расходники**"))
+        st.markdown("**➕ Özel sarf kalemleri**")
         if "cons_custom_df" not in st.session_state:
             st.session_state["cons_custom_df"] = pd.DataFrame([{"Kalem (Статья)":"", "Oran (%) (Доля, %)":0.0, "Dahil? (Включить?)":False}])
         
@@ -2759,15 +2221,15 @@ with tab_gider:
                 st.session_state["cons_custom_df"],
                 num_rows="dynamic", hide_index=True, key="custom_consumables_editor_form"
             )
-            if st.form_submit_button(bi("💾 Sarf Kaydet","💾 Сохранить расходники")):
+            if st.form_submit_button("💾 Sarf Kaydet"):
                 st.session_state["cons_custom_df"] = edited_cons_custom
-                st.success(bi("Sarf kalemleri kaydedildi!","Группа расходников сохранена!"))
+                st.success("Sarf kalemleri kaydedildi!")
             else:
                 # Mevcut değerleri kullan
                 st.session_state["cons_custom_df"] = edited_cons_custom
 
     # Genel Gider Grupları
-    with st.expander("🧮 Genel Gider Grupları — % (seç-belirle) / 🧮 Группы общих расходов — % (выбрать-настроить)", expanded=False):
+    with st.expander("🧮 Genel Gider Grupları — % (seç-belirle)", expanded=False):
         if "ovh_groups_state" not in st.session_state:
             st.session_state["ovh_groups_state"] = {name: {"on": False, "pct": float(p)} for (name,p) in OVERHEAD_GROUPS_PRESET}
         ovh_state = st.session_state["ovh_groups_state"]
@@ -2776,20 +2238,19 @@ with tab_gider:
             c1, c2 = st.columns([0.60, 0.40])
             with c1: st.write(name)
             with c2:
-                on = st.checkbox(bi("Aktif","Активно"), value=ovh_state[name]["on"], key=f"og_on_{name}")
-                pct = st.number_input(bi("Etki %","Доля, %"), min_value=0.0, max_value=100.0,
+                on = st.checkbox("Aktif", value=ovh_state[name]["on"], key=f"og_on_{name}")
+                pct = st.number_input("Etki %", min_value=0.0, max_value=100.0,
                                       value=float(ovh_state[name]["pct"]), step=0.25, format="%.2f",
                                       key=f"og_pct_{name}")
                 ovh_state[name] = {"on": bool(on), "pct": float(pct)}
                 if on: ovh_sum += float(pct)
         if ovh_sum/100.0 > OVERHEAD_RATE_MAX:
-            st.warning(bi(f"Genel gider toplamı {ovh_sum:.2f}% > izinli {OVERHEAD_RATE_MAX*100:.0f}% — hesapta {OVERHEAD_RATE_MAX*100:.0f}% ile sınırlandırılır.",
-                          f"Сумма общих расходов {ovh_sum:.2f}% > лимита {OVERHEAD_RATE_MAX*100:.0f}% — в расчёте ограничим {OVERHEAD_RATE_MAX*100:.0f}%."))
+            st.warning(f"Genel gider toplamı {ovh_sum:.2f}% > izinli {OVERHEAD_RATE_MAX*100:.0f}% — hesapta {OVERHEAD_RATE_MAX*100:.0f}% ile sınırlandırılır.")
         st.session_state["_ogroups_total_pct"] = float(ovh_sum)
-        st.markdown(f"<div class='badge'>{bi('Seçili toplam:','Выбрано всего:')} <b>{ovh_sum:.2f}%</b></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='badge'>Seçili toplam: <b>{ovh_sum:.2f}%</b></div>", unsafe_allow_html=True)
 
         # Özel kalemler
-        st.markdown(bi("**➕ Özel genel gider kalemleri**","**➕ Пользовательские общие расходы**"))
+        st.markdown("**➕ Özel genel gider kalemleri**")
         if "ovh_custom_df" not in st.session_state:
             st.session_state["ovh_custom_df"] = pd.DataFrame([{"Kalem (Статья)":"", "Oran (%) (Доля, %)":0.0, "Dahil? (Включить?)":False}])
         
@@ -2799,17 +2260,16 @@ with tab_gider:
                 st.session_state["ovh_custom_df"],
                 num_rows="dynamic", hide_index=True, key="custom_overhead_editor_form"
             )
-            if st.form_submit_button(bi("💾 Genel Gider Kaydet","💾 Сохранить общие расходы")):
+            if st.form_submit_button("💾 Genel Gider Kaydet"):
                 st.session_state["ovh_custom_df"] = edited_ovh_custom
-                st.success(bi("Genel gider kalemleri kaydedildi!","Группа общих расходов сохранена!"))
+                st.success("Genel gider kalemleri kaydedildi!")
             else:
                 # Mevcut değerleri kullan
                 st.session_state["ovh_custom_df"] = edited_ovh_custom
 
     # Indirect (Diğer) Grupları
-    with st.expander("📦 Indirect (Diğer) Grupları — % (seç-belirle) / 📦 Косвенные (прочие) — % (выбрать-настроить)", expanded=False):
-        st.info(bi("ℹ️ Not: Indirect grupları varsayılan olarak pasif durumda. İhtiyaç duyduğunuz kalemleri aktif hale getirin.",
-                   "ℹ️ Примечание: по умолчанию косвенные группы выключены. Активируйте нужные."))
+    with st.expander("📦 Indirect (Diğer) Grupları — % (seç-belirle)", expanded=False):
+        st.info("ℹ️ **Not:** Indirect grupları varsayılan olarak **pasif** durumda. İhtiyaç duyduğunuz kalemleri aktif hale getirin.")
         st.caption("📋 **Varsayılan değerler:** Şantiye Genel İdare (%7), Ekipman/Amortisman (%5), Lojistik/Sevkiyat (%3), Güvenlik & İSG (%2), Ofis/GSM/İzin-Belge (%1.5)")
         
         if "indirect_groups_state" not in st.session_state:
@@ -2825,10 +2285,10 @@ with tab_gider:
                 st.write(name)
                 # Pasif kalemler için gri renk
                 if not ind_state[name]["on"]:
-                    st.caption(bi("⚪ Pasif","⚪ Неактивно"))
+                    st.caption("⚪ Pasif")
             with c2:
-                on = st.checkbox(bi("Aktif","Активно"), value=ind_state[name]["on"], key=f"ig_on_{name}")
-                pct = st.number_input(bi("Etki %","Доля, %"), min_value=0.0, max_value=100.0,
+                on = st.checkbox("Aktif", value=ind_state[name]["on"], key=f"ig_on_{name}")
+                pct = st.number_input("Etki %", min_value=0.0, max_value=100.0,
                                       value=float(ind_state[name]["pct"]), step=0.25, format="%.2f",
                                       key=f"ig_pct_{name}")
                 ind_state[name] = {"on": bool(on), "pct": float(pct)}
@@ -2838,17 +2298,14 @@ with tab_gider:
         
         # Toplam gösterimi
         if ind_sum > 0:
-            st.success(bi(f"✅ Seçili Indirect Toplam: {ind_sum:.2f}%", f"✅ Сумма выбранных косвенных: {ind_sum:.2f}%"))
+            st.success(f"✅ **Seçili Indirect Toplam:** {ind_sum:.2f}%")
         else:
-            st.warning(bi("⚠️ Indirect: Hiçbir kalem seçili değil - Varsayılan olarak tüm kalemler pasif",
-                          "⚠️ Косвенные: ничего не выбрано — по умолчанию все выключены"))
+            st.warning("⚠️ **Indirect:** Hiçbir kalem seçili değil - Varsayılan olarak tüm kalemler pasif")
 
         # Özel kalemler
-        st.markdown(bi("**➕ Özel indirect kalemleri**","**➕ Пользовательские косвенные**"))
-        st.caption(bi("Özel kalemler de varsayılan olarak pasif durumda. İhtiyaç duyduğunuz kalemleri ekleyip aktif hale getirin.",
-                      "Пользовательские строки тоже по умолчанию неактивны. Добавьте и включите нужные."))
-        st.caption(bi("💡 İpucu: Yeni kalem eklemek için 'Dahil?' sütunundaki kutuyu işaretleyin.",
-                      "💡 Подсказка: чтобы добавить строку, отметьте чекбокс 'Включить?'."))
+        st.markdown("**➕ Özel indirect kalemleri**")
+        st.caption("Özel kalemler de varsayılan olarak **pasif** durumda. İhtiyaç duyduğunuz kalemleri ekleyip aktif hale getirin.")
+        st.caption("💡 **İpucu:** Yeni kalem eklemek için 'Dahil?' sütunundaki checkbox'ı işaretleyin.")
         if "ind_custom_df" not in st.session_state:
             st.session_state["ind_custom_df"] = pd.DataFrame([{"Kalem (Статья)":"", "Oran (%) (Доля, %)":0.0, "Dahil? (Включить?)":False}])
         
@@ -2858,9 +2315,9 @@ with tab_gider:
                 st.session_state["ind_custom_df"],
                 num_rows="dynamic", hide_index=True, key="custom_indirect_editor_form"
             )
-            if st.form_submit_button(bi("💾 Indirect Kaydet","💾 Сохранить косвенные")):
+            if st.form_submit_button("💾 Indirect Kaydet"):
                 st.session_state["ind_custom_df"] = edited_ind_custom
-                st.success(bi("Indirect kalemleri kaydedildi!","Косвенные сохранены!"))
+                st.success("Indirect kalemleri kaydedildi!")
             else:
                 # Mevcut değerleri kullan
                 st.session_state["ind_custom_df"] = edited_ind_custom
@@ -2895,139 +2352,23 @@ with tab_gider:
     # Indirect oranını session state'e kaydet
     st.session_state["indirect_rate_total"] = ind_total / 100.0
     
-    # Grup toplamlarını göster: Sarf, Overhead, Indirect + Genel Toplam
-    st.markdown("---")
-    cols_sum = st.columns(3)
-    with cols_sum[0]:
-        st.info(bi(f"Sarf Toplam: {cons_total:.2f}% ({cons_total/100.0:.3f})",
-                   f"Расходники всего: {cons_total:.2f}% ({cons_total/100.0:.3f})"))
-    with cols_sum[1]:
-        st.info(bi(f"Genel Gider Toplam: {ovh_total:.2f}% ({ovh_total/100.0:.3f})",
-                   f"Overhead всего: {ovh_total:.2f}% ({ovh_total/100.0:.3f})"))
-    with cols_sum[2]:
-        st.info(bi(f"Indirect Toplam: {ind_total:.2f}% ({ind_total/100.0:.3f})",
-                   f"Косвенные всего: {ind_total:.2f}% ({ind_total/100.0:.3f})"))
+    # Indirect toplamını göster
+    if ind_total > 0:
+        st.success(f"✅ **Indirect Toplam:** {ind_total:.2f}% ({ind_total/100.0:.3f})")
+    else:
+        st.info("ℹ️ **Indirect:** Hiçbir kalem aktif değil (0%) - Varsayılan olarak tüm kalemler pasif")
 
-    grand_total = cons_total + ovh_total + ind_total
-    st.success(bi(f"✅ Genel Toplam: {grand_total:.2f}% ({grand_total/100.0:.3f})",
-                  f"✅ Итого по группам: {grand_total:.2f}% ({grand_total/100.0:.3f})"))
 # ==================== 5) SORUMLULUK MATRİSİ (şık) ====================
 with tab_matris:
-    bih("✨ Sorumluluk Matrisi (checkbox + % katkı)", "✨ Матрица ответственности (чекбокс + вклад, %)", level=4)
-    bitr("Seçtiğin satırlar bize ait maliyet sayılır. Yandaki yüzde kutusu 'toplam maliyete oran' katkısıdır.",
-         "Отмеченные строки считаются затратами подрядчика. Поле с процентом — вклад в общую стоимость.")
-    bitr("Üstteki manuel %'lerle çakışmayı önlemek için aşağıdaki anahtarı kullan.",
-         "Чтобы избежать дублирования с ручными %, используйте переключатель ниже.")
+    st.markdown("#### ✨ Sorumluluk Matrisi (checkbox + % katkı)")
+    st.caption("Seçtiğin satırlar **bize ait maliyet** sayılır. Yanındaki yüzde kutusu 'toplam maliyete oran' katkısıdır. "
+               "Üstteki manuel %'lerle çakışmayı önlemek için aşağıdaki anahtarı kullan.")
 
-    use_matrix_override = st.toggle(bi("🔗 Matris toplamları manuel Sarf/Overhead/Indirect yüzdelerini geçsin (override)",
-                                       "🔗 Суммы матрицы перекрывают ручные проценты по расходникам/overhead/косвенным"),
-                                    value=st.session_state.get("use_matrix_override", False))
+    use_matrix_override = st.toggle("🔗 Matris toplamları manuel **Sarf/Overhead/Indirect** yüzdelerini **geçsin (override)**", value=st.session_state.get("use_matrix_override", False))
     st.session_state["use_matrix_override"] = use_matrix_override
 
     # Katalog: (Grup, anahtar, TR, RU, kategori: consumables|overhead|indirect, varsayılan %, çakışma etiketi)
     # overlap: global_extras | core_labor | materials | None
-    def _tr_resp_label(key: str, default_tr: str) -> str:
-        mapping = {
-            # General
-            "gen_staff_work": "İşlerin yürütülmesi için personel",
-            "gen_work_permit": "Personel için çalışma izni",
-            "gen_visa_rf": "Yabancı çalışanlar için RF çalışma vizeleri",
-            "gen_migration_resp": "RF göç mevzuatına uyum (ceza/hukuk/sınır dışı riskleri)",
-            "gen_social_payments": "Personel ve alt yükleniciler için sosyal ödemeler/vergiler",
-            "gen_staff_transport_domintl": "Personelin taşınması (yurtiçi/yurtdışı)",
-            "gen_staff_transport_local": "Personelin yerel taşınması",
-            "gen_accom_food": "Personelin barınma ve yemek giderleri",
-            "gen_transport_mounting": "Montaj malzemeleri/ekipmanlarının yerel taşınması (yüklenici)",
-            "gen_transport_wh_to_site": "Müşteri deposundan şantiyeye yerel taşıma",
-            "gen_risk_loss_customer_ware": "Müşteri malzemelerinin depolarda kayıp riski",
-            "gen_risk_loss_customer_to_finish": "Montaja verilen müşteri malzemelerinin bitime kadar kayıp riski",
-            "gen_risk_own_materials_equipment": "Yüklenicinin kendi malzeme/ekipmanının kayıp riski (kablolar dâhil)",
-            "gen_required_licenses": "İş türleri için gerekli lisanslar (RF düzenlemeleri)",
-            "gen_insurance_equip_staff": "Ekipman ve personel sigortası",
-            "gen_workplace_facilities": "Çalışma alanı donanımı: mobilya, telefon, internet, yazıcı",
-            # H&S
-            "hs_engineer_on_site": "İSG mühendisi – sahada daimi temsilci",
-            "hs_action_plan": "İSG eylem planı",
-            "hs_meetings": "İSG koordinasyon toplantılarına katılım (talebe bağlı)",
-            "hs_initial_briefing": "Tüm personel için ilk İSG bilgilendirmesi",
-            "hs_full_responsibility": "Yüklenici alanlarında İSG kurallarına tam sorumluluk",
-            "hs_guarding_openings": "Açıklıkların korunması ve kapatılması (yüklenici alanları)",
-            "hs_site_med_station": "Şantiye reviri (ilk yardım; hemşire gündüz/gece)",
-            "hs_medical_costs": "Tıbbi giderler (ilaç, hastane vb.)",
-            "hs_first_aid_kits": "İlk yardım ekipmanları (çalışma alanlarında setler)",
-            "hs_ppe": "SİZ, iş kıyafeti ve ayakkabı",
-            "hs_firefighting_eq": "Yangınla mücadele ekipmanı (tüp/örtü/su)",
-            "hs_safety_labeling": "Güvenlik işaretlemeleri/uyarı levhaları",
-            "hs_wind_panels": "Rüzgâr panelleri",
-            "hs_protective_nets": "Koruyucu-yakalama ağları (ЗУС)",
-            "hs_worker_certs": "Çalışanlar için gerekli sertifika/ehliyetler",
-            "hs_consumables": "İSG için tüm sarf malzemeleri",
-            "hs_lifting_consumables": "Kaldırma işleri (bkz. kule vinçler) için sarf malzemeleri",
-            "hs_lifting_supervisors": "Kaldırma ekipmanı için işaretçi/rigging sorumluları",
-            # Site
-            "site_power_conn": "Enerji bağlantı noktaları (genel plana göre)",
-            "site_power_distribution": "Yüklenici alanlarına enerji dağıtımı",
-            "site_power_costs": "Elektrik giderleri",
-            "site_water_conn": "Prosess suyu bağlantı noktaları (genel plana göre)",
-            "site_water_distribution": "Yüklenici alanlarına su dağıtımı",
-            "site_water_costs": "Su giderleri",
-            "site_generator": "Gerekirse jeneratör",
-            "site_main_lighting": "Alan/bina ana aydınlatması (tüm dönem)",
-            "site_add_lighting": "Ek aydınlatma (yüklenici alanları)",
-            "site_covered_storage": "Montaja verilmiş malzemeler için kapalı stok alanı",
-            "site_closed_storage": "Montaj malzemeleri için kapalı depo/ambar",
-            "site_temp_roads": "Yalnız yüklenici kullanımına geçici yollar",
-            "site_add_fencing": "Yüklenici alanı için ek çit (gerekirse)",
-            "site_scrap_place": "Şantiyede hurda metal depolama alanı",
-            "site_lockers": "Soyunma odaları",
-            "site_office": "Ofis alanları",
-            "site_toilets": "Yüklenici için tuvaletler",
-            "site_fire_access": "Yangın müdahale yolları ve şantiyeye sürekli erişim",
-            "site_gate_guard": "Giriş kapısında güvenlik",
-            "site_add_guard": "Ek güvenlik (gerekirse)",
-            "site_full_fencing": "Tüm şantiye alanının çevrilmesi",
-            # Works
-            "w_proj_docs": "Sayısal proje dokümanları",
-            "w_mos": "Yöntem bildirimi (PPR) hazırlanması",
-            "w_handover_docs": "Teslim dosyaları (as-built/protokoller) hazırlanması",
-            "w_docs_archive": "Arşiv/Elektronik sistemden dokümanlar",
-            "w_handover_site_coord": "Şantiye ağlarının ve koordinat sisteminin devri",
-            "w_rep_present": "Yüklenici temsilcisinin sahada sürekli bulunması",
-            "w_rep_coord_meet": "Koordinasyon toplantılarına katılım (yüklenici temsilcisi)",
-            "w_detailed_schedule": "Yüklenici işlerinin ayrıntılı iş programı",
-            "w_weekly_reports": "Haftalık ilerleme raporları (kaynaklar dahil)",
-            "w_weekly_safety": "Haftalık İSG raporları",
-            "w_concrete_proc": "Beton tedariki",
-            "w_rebar_proc": "Donatı çeliği tedariki",
-            "w_scaff_form": "İskele ve kalıp sistemleri (tümü)",
-            "w_tower_cranes": "Kule vinçler (operatörlü)",
-            "w_temp_lifts": "Geçici şantiye asansörleri (operatörlü)",
-            "w_concrete_pumps": "Beton pompaları (tüm borular ile)",
-            "w_pump_operators": "Pompa operatörleri, hat montajı ve bakımı",
-            "w_hyd_dist": "Hidrolik beton dağıtıcılar",
-            "w_hyd_dist_ops": "Hidrolik dağıtıcı operatörleri",
-            "w_aux_lifting": "Hareketli & yardımcı kaldırma araçları (kamyon, vinç, manlift)",
-            "w_wheel_wash": "Tekerlek yıkama (operatörlü)",
-            "w_all_equipment": "İşlerin icrası için her tür ekipman",
-            "w_aux_heat_insul": "Betonda kullanılan yardımcı ısı yalıtım malzemeleri",
-            "w_consumables": "İmalat sarfları (gaz, disk, tel vb.)",
-            "w_measurements": "Ölçümler ve evrak (as-built dâhil)",
-            "w_radios": "El telsizleri",
-            "w_concrete_care": "Beton bakım işleri (kışın ısıtma dâhil)",
-            "w_lab_tests": "Gerekli tüm laboratuvar testleri",
-            "w_cleaning": "Yüklenici alanlarının temizliği, atıkların uzaklaştırılması",
-            "w_snow_fire_access": "Ana güzergâhlar ve yangın yollarından kar/buz temizliği",
-            "w_snow_local": "Yüklenici alanları/depolar/geçici yollardan kar/buz temizliği",
-            "w_stormwater_site": "Şantiye sahasından yağmur suyu drenajı",
-            "w_stormwater_contractor": "Yüklenici alanlarından yağmur suyu drenajı",
-            "w_load_unload": "Malzemelerin sahada yükleme/boşaltması (düşey/yatay)",
-            "w_transport_inside": "Saha içi malzeme taşımaları",
-            "w_rebar_couplings": "Dişli/sıkma muflar + hazırlık ekipmanı (donatı)",
-            "w_rebar_coupling_works": "Muflu donatı hazırlık/bağlantı çalışmaları",
-            "w_material_overspend": "Malzeme israfının mali sorumluluğu",
-            "w_repair_for_handover": "Teslim için gerekli onarım işleri",
-        }
-        return mapping.get(key, default_tr)
     resp_catalog = [
         # ---------- 1) General ----------
         ("General","gen_staff_work","Staff for work implementation","Персонал для выполнения работ","overlap_only",0.0,"core_labor"),
@@ -3185,7 +2526,6 @@ with tab_matris:
     with mat_cols[2]: st.markdown("**Bizde? · %**")
 
     for group,k, tr, ru, cat, dflt, overlap in resp_catalog:
-        tr = _tr_resp_label(k, tr)
         if group != last_group:
             last_group = group
             st.markdown(f"### 📋 {group}")
@@ -3258,7 +2598,7 @@ with tab_matris:
 
     # Modern toplam kartları
     st.markdown("---")
-    bih("📊 Matris Toplamları","📊 Итого по матрице", level=3)
+    st.markdown("### 📊 Matris Toplamları")
     
     col_sum1, col_sum2, col_sum3 = st.columns(3)
     
@@ -3288,55 +2628,40 @@ with tab_matris:
 
     # Override kontrolü
     st.markdown("---")
-    bih("⚙️ Matris Override Kontrolü","⚙️ Перекрытие матрицей", level=3)
+    st.markdown("### ⚙️ Matris Override Kontrolü")
     
     if use_matrix_override:
         st.session_state["consumables_rate_eff"]   = mx_sums["consumables"]/100.0
         st.session_state["overhead_rate_eff"]      = mx_sums["overhead"]/100.0
         st.session_state["indirect_rate_total_eff"]= mx_sums["indirect"]/100.0
-        st.success(bi("✅ Override aktif: manuel Sarf/Overhead/Indirect oranları yok sayılır; hesapta matris toplamları kullanılacak.",
-                      "✅ Перекрытие активно: ручные проценты игнорируются; в расчёте используются суммы матрицы."))
+        st.success("✅ **Override aktif:** Manuel Sarf/Overhead/Indirect oranları **yok sayılır**, hesapta matris toplamları kullanılacak.")
     else:
         st.session_state.pop("consumables_rate_eff", None)
         st.session_state.pop("overhead_rate_eff", None)
         st.session_state.pop("indirect_rate_total_eff", None)
-        st.info(bi("ℹ️ Override kapalı: Manuel Sarf/Overhead/Indirect oranları kullanılacak; матрица sadece гösterim amaçlı.",
-                   "ℹ️ Перекрытие выключено: используются ручные проценты; суммы матрицы — только для отображения."))
+        st.info("ℹ️ **Override kapalı:** Manuel Sarf/Overhead/Indirect oranları kullanılacak, matris toplamları gösterim amaçlı.")
+
 # ==================== 6) SONUÇLAR: Tüm Hesaplama Sonuçları ====================
 with tab_sonuclar:
-    left, right = st.columns([0.8,0.2])
-    with left:
-        bih("📊 Hesap Sonuçları Özeti","📊 Сводка результатов расчёта", level=2)
-    with right:
-        if st.button(bi("🧹 Sonuçları Temizle","🧹 Очистить результаты"), type="secondary"):
-            # Varsayılan/boş hal
-            st.session_state["calculation_results"] = None
-            # Bazı türetilmiş cache/state alanlarını sıfırla
-            st.session_state.pop("roles_calc", None)
-            st.session_state.pop("elements_df", None)
-            st.session_state.pop("metraj_df", None)
-            st.session_state.pop("_met_for_keys", None)
-            try:
-                st.rerun()
-            except Exception:
-                st.toast(bi("Sayfa yenilendi.","Страница обновлена."))
+    st.markdown("## 📊 Hesap Sonuçları Özeti")
     
     # --- Hesaplama butonu ---
     if "calculation_results" not in st.session_state:
         st.session_state["calculation_results"] = None
 
     # Hesaplama butonu
-    if st.button(bi("🧮 HESAPLA","🧮 РАССЧИТАТЬ"), type="primary", use_container_width=True, key="hesapla_sonuclar", help="Hesaplamayı başlat"):
+    if st.button("🧮 HESAPLA", type="primary", use_container_width=True, key="hesapla_sonuclar", help="Hesaplamayı başlat"):
         # Modern loading animasyonu
         ph = get_loading_placeholder()
         with ph.container():
             st.markdown("""
             <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 20px; margin: 1rem 0;">
-                <h3 style="margin: 0; color: white;">⚡ Hesaplama İşlemi / ⚡ Процесс расчёта</h3>
-                <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Lütfen bekleyin, sonuçlar hazırlanıyor... / Пожалуйста, подождите, формируем результаты…</p>
+                <h3 style="margin: 0; color: white;">⚡ Hesaplama İşlemi</h3>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Lütfen bekleyin, sonuçlar hazırlanıyor...</p>
             </div>
             """, unsafe_allow_html=True)
-        with st.spinner("🚀 Hesaplamalar yapılıyor... / 🚀 Выполняем расчёты…"):
+        
+        with st.spinner("🚀 Hesaplamalar yapılıyor..."):
             try:
                 # Güvenli değişken erişimi
                 roles_df = st.session_state.get("roles_df", pd.DataFrame())
@@ -3348,7 +2673,7 @@ with tab_sonuclar:
                         selected_elements.append(k)
                 
                 if not selected_elements:
-                    st.warning(bi("En az bir betonarme eleman seçin.","Выберите хотя бы один элемент."))
+                    st.warning("En az bir betonarme eleman seçin.")
                     st.stop()
                 
                 if len(selected_elements) > 0 and len(roles_df) > 0:
@@ -3361,9 +2686,14 @@ with tab_sonuclar:
                     
                     # SENARYO NORMALARI VE ZORLUK - TAM ALGORİTMA
                     # Senaryoya göre temel norm (Temel için)
-                    # Senaryo bazı — override destekli
-                    _norms_map = get_effective_scenario_norms()
-                    scenario_base = float((_norms_map.get(scenario) or SCENARIO_NORMS["Gerçekçi"]) ["Temel"])
+                    scenario_base_norms = {
+                        "İdeal": 14,      # Temel = 14 a·s/m³
+                        "Gerçekçi": 16,   # Temel = 16 a·s/m³
+                        "Kötü": 19        # Temel = 19 a·s/m³
+                    }
+                    
+                    # Senaryo bazı
+                    scenario_base = scenario_base_norms.get(scenario, 16)
                     
                     # Zorluk çarpanı tek merkezden hesaplanır ve cache'e yazılır
                     z_mult = get_difficulty_multiplier_cached()
@@ -3752,56 +3082,58 @@ with tab_sonuclar:
                 st.session_state["calculation_results"] = None
             finally:
                 clear_loading_placeholder()
+    
+    # Hesaplama sonuçlarını göster
     if st.session_state.get("calculation_results"):
         results = st.session_state["calculation_results"]
         data = results["data"]
         
         # Ana metrikler - Modern kartlar
-        bih("💰 Adam-Saat Fiyatları","💰 Стоимость человеко-часа", level=2)
+        st.markdown("## 💰 Adam-Saat Fiyatları")
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>🏃 Çıplak a·s Fiyatı / Базовая цена ч·ч</h3>
+                <h3>🏃 Çıplak a·s Fiyatı</h3>
                 <div class="val">{data['bare_as_price']:,.2f} ₽/a·s</div>
             </div>
             """, unsafe_allow_html=True)
         with col2:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>🍽️ Genel Giderli a·s / С ч·ч с общими расходами</h3>
+                <h3>🍽️ Genel Giderli a·s</h3>
                 <div class="val">{data['with_extras_as_price']:,.2f} ₽/a·s</div>
             </div>
             """, unsafe_allow_html=True)
         with col3:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>🎯 Her Şey Dahil a·s / Полная ч·ч (всё включено)</h3>
+                <h3>🎯 Her Şey Dahil a·s</h3>
                 <div class="val">{data['fully_loaded_as_price']:,.2f} ₽/a·s</div>
             </div>
             """, unsafe_allow_html=True)
 
         # Proje özeti - Modern kartlar
-        bih("🏗️ Proje Özeti","🏗️ Сводка проекта", level=3)
+        st.markdown("### 🏗️ Proje Özeti")
         colA, colB, colC = st.columns(3)
         with colA:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>⏰ Toplam Adam-Saat / Итого ч·ч</h3>
+                <h3>⏰ Toplam Adam-Saat</h3>
                 <div class="val">{data['total_adamsaat']:,.2f} чел·ч</div>
             </div>
             """, unsafe_allow_html=True)
         with colB:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>📏 m³ Başına Ort. a·s / Ср. ч·ч на м³</h3>
+                <h3>📏 m³ Başına Ort. a·s</h3>
                 <div class="val">{data['avg_norm_per_m3']:,.2f} a·s/m³</div>
             </div>
             """, unsafe_allow_html=True)
         with colC:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>💰 Genel Ortalama / Среднее по проекту</h3>
+                <h3>💰 Genel Ortalama</h3>
                 <div class="val">{data['general_avg_m3']:,.2f} ₽/m³</div>
             </div>
             """, unsafe_allow_html=True)
@@ -3810,14 +3142,14 @@ with tab_sonuclar:
         with colD:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>📊 Toplam Metraj / Общий объём</h3>
+                <h3>📊 Toplam Metraj</h3>
                 <div class="val">{data['total_metraj']:,.3f} m³</div>
             </div>
             """, unsafe_allow_html=True)
         with colE:
             st.markdown(f"""
             <div class="metric-card">
-                <h3>💵 Toplam Maliyet / Общая стоимость</h3>
+                <h3>💵 Toplam Maliyet</h3>
                 <div class="val">{data['project_total_cost']:,.2f} ₽</div>
             </div>
             """, unsafe_allow_html=True)
@@ -3826,16 +3158,9 @@ with tab_sonuclar:
         clear_loading_placeholder()
         
         # Oranlar
-        bih("📊 Etkili Oranlar","📊 Эффективные доли", level=3)
-        _mode_override = bool(st.session_state.get("use_matrix_override", False))
-        if _mode_override:
-            st.markdown("<div style='display:inline-block;padding:2px 8px;border-radius:9999px;background:#e6fffa;border:1px solid #99f6e4;color:#065f46;font-weight:600;margin-bottom:8px;'>"+bi("Mod: Matris Override","Режим: Матрица override")+"</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div style='display:inline-block;padding:2px 8px;border-radius:9999px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-weight:600;margin-bottom:8px;'>"+bi("Mod: Manuel %","Режим: Ручные %")+"</div>", unsafe_allow_html=True)
-        st.markdown(bi(f"**🧴 Sarf:** {data['consumables_rate_eff']*100:.2f}%",
-                       f"**🧴 Расходники:** {data['consumables_rate_eff']*100:.2f}%"))
-        st.markdown(bi(f"**🧮 Overhead:** {data['overhead_rate_eff']*100:.2f}%",
-                       f"**🧮 Overhead:** {data['overhead_rate_eff']*100:.2f}%"))
+        st.markdown("### 📊 Etkili Oranlar")
+        st.markdown(f"**🧴 Sarf:** {data['consumables_rate_eff']*100:.2f}%")
+        st.markdown(f"**🧮 Overhead:** {data['overhead_rate_eff']*100:.2f}%")
         st.markdown(f"**🧾 Indirect:** {data['indirect_rate_total']*100:.2f}%")
         st.markdown(f"**Indirect toplam:** {data['indirect_total']:,.2f} ₽ · **Pay:** {data['indirect_share']:.1%}")
 
@@ -4108,7 +3433,53 @@ with tab_sonuclar:
         else:
             st.info("Grafik için tarih aralığında en az bir ay olmalı.")
 
-        # Rapor indirme bölümü kaldırıldı; indirmeler 'Import' sekmesine taşındı.
+        # Excel/CSV indirme - Modern butonlar
+        st.markdown("---")
+        st.markdown("### 📥 Rapor İndirme")
+        
+        col_download1, col_download2 = st.columns(2)
+        
+        with col_download1:
+            # Excel
+            xls_buf = io.BytesIO()
+            try:
+                with ExcelWriter(xls_buf, engine="xlsxwriter") as xw:
+                    data['elements_df'].to_excel(xw, sheet_name="Svodka", index=False)
+                    data['roles_calc_df'].to_excel(xw, sheet_name="Roller", index=False)
+                    # Manpower Distribution tablosu ekle
+                    if not data['month_wd_df'].empty:
+                        n_months = len(data['month_wd_df'])
+                        weights = [1.0/n_months] * n_months
+                        headcounts_float = [data['person_months_total'] * wi for wi in weights]
+                        headcounts_int = [round(h) for h in headcounts_float]
+                        
+                        month_wd_df_copy = data['month_wd_df'].copy()
+                        month_wd_df_copy["Manpower (Численность)"] = headcounts_int
+                        month_wd_df_copy.to_excel(xw, sheet_name="Manpower Distribution", index=False)
+                st.download_button(
+                    "📥 Excel İndir (.xlsx)", 
+                    data=xls_buf.getvalue(),
+                    file_name="iscilik_m3_rapor.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    help="Excel formatında detaylı rapor indir"
+                )
+            except Exception as e:
+                st.error(f"Excel oluşturma hatası: {e}")
+
+        with col_download2:
+            # CSV
+            csv_buf = io.StringIO()
+            if not data['elements_df'].empty:
+                data['elements_df'].to_csv(csv_buf, sep=";", index=False)
+            st.download_button(
+                "⬇️ CSV İndir (.csv)", 
+                data=csv_buf.getvalue().encode("utf-8"),
+                file_name="iscilik_m3_cikti.csv", 
+                mime="text/csv",
+                use_container_width=True,
+                help="CSV formatında veri indir"
+            )
 
     else:
         st.info("💡 Hesaplama yapmak için yukarıdaki **HESAPLA** butonuna tıklayın.")
@@ -4117,130 +3488,11 @@ with tab_sonuclar:
         st.markdown("2. **Eleman & Metraj** sekmesinde betonarme elemanları seçin")
         st.markdown("3. **Roller** sekmesinde rol kompozisyonunu belirleyin")
         st.markdown("4. **HESAPLA** butonuna tıklayarak sonuçları görün")
-# ==================== 7.1) IMPORT: Gelişmiş Veri İçe Aktarma ====================
-with tab_import:
-    bih("📥 İçe Aktar (CSV/Excel/JSON)","📥 Импорт (CSV/Excel/JSON)", level=3)
-    bitr(
-        "Projeye ait metraj, roller veya özel giderleri dış dosyalardan alabilirsiniz.",
-        "Можно загрузить объёмы, роли или прочие затраты из внешних файлов."
-    )
+    
 
-    import_option = st.radio(
-        bi("Hedef tablo","Целевая таблица"),
-        [bi("Eleman & Metraj","Элементы и объёмы"), bi("Roller","Роли"), bi("Özel Giderler","Прочие затраты")],
-        horizontal=True
-    )
 
-    uploaded_file = st.file_uploader(bi("Dosya seçin","Выберите файл"), type=["csv","xlsx","xls","json"])
 
-    with st.expander(bi("Kolon eşleştirme","Сопоставление колонок"), expanded=False):
-        st.caption(bi("Sol: beklenen, Sağ: dosyadaki karşılık","Слева ожидается, справа — соответствие из файла"))
-        if import_option.startswith("🧩") or "Eleman" in import_option:
-            expected_cols = ["Eleman","Metraj (m3)"]
-        elif import_option.startswith("👥") or "Rol" in import_option:
-            expected_cols = ["Rol","Ağırlık (Вес)","Net Maaş (₽)"]
-        else:
-            expected_cols = ["Kalem","Tutar (₽)","Grup"]
-        mapping = {}
-        for col in expected_cols:
-            mapping[col] = st.text_input(col, col)
 
-    if uploaded_file:
-        try:
-            if uploaded_file.name.lower().endswith((".xlsx",".xls")):
-                df_in = pd.read_excel(uploaded_file)
-            elif uploaded_file.name.lower().endswith(".csv"):
-                df_in = pd.read_csv(uploaded_file)
-            else:
-                df_in = pd.read_json(uploaded_file)
-
-            st.dataframe(df_in.head(50), use_container_width=True)
-
-            if st.button(bi("İçe aktar","Импортировать"), type="primary"):
-                df = df_in.rename(columns=mapping)
-                if "Eleman" in mapping:
-                    # Eleman & Metraj
-                    need = ["Eleman","Metraj (m3)"]
-                    if all(c in df.columns for c in need):
-                        met_df = pd.DataFrame({k: st.session_state.get(k, False) for k in CANON_KEYS}, index=[0])
-                        for _, r in df.iterrows():
-                            key = canon_key(str(r["Eleman"])) if "Eleman" in r else None
-                            if key in CANON_KEYS:
-                                st.session_state[f"sel_{key}"] = True
-                                st.session_state[f"met_{key}"] = float(r["Metraj (m3)"])
-                        st.success(bi("Metraj güncellendi","Объёмы обновлены"))
-                    else:
-                        st.error(bi("Kolonlar eksik","Не хватает колонок"))
-                elif "Rol" in mapping:
-                    need = ["Rol","Ağırlık (Вес)","Net Maaş (₽)"]
-                    if all(c in df.columns for c in need):
-                        roles_df = st.session_state.get("roles_df", get_default_roles_df())
-                        for _, r in df.iterrows():
-                            name = str(r["Rol"]).strip()
-                            w = float(r["Ağırlık (Вес)"])
-                            net = float(r["Net Maaş (₽)"])
-                            if name in roles_df["Rol"].values:
-                                roles_df.loc[roles_df["Rol"]==name,["Ağırlık (Вес)","Net Maaş (₽)"]] = [w, net]
-                            else:
-                                roles_df.loc[len(roles_df)] = [name,w,net]
-                        st.session_state["roles_df"] = roles_df
-                        st.success(bi("Roller güncellendi","Роли обновлены"))
-                    else:
-                        st.error(bi("Kolonlar eksik","Не хватает колонок"))
-                else:
-                    st.info(bi("Özel gider aktarımı için ayrı şablon eklenecek","Шаблон импорта прочих затрат будет добавлен"))
-        except Exception as e:
-            st.error(bi(f"İçe aktarma hatası: {e}", f"Ошибка импорта: {e}"))
-
-    st.markdown("---")
-    bih("📊 Yönetici Özeti Excel","📊 Excel-отчёт для руководства", level=4)
-    bitr("Şık formatlı özet rapor üretir.","Генерирует красиво оформленный сводный отчёт.")
-
-    if st.button(bi("📥 Excel üret","📥 Сформировать Excel"), type="primary"):
-        try:
-            buf = io.BytesIO()
-            with ExcelWriter(buf, engine="xlsxwriter") as xw:
-                wb = xw.book
-                fmt_title = wb.add_format({"bold": True, "font_size": 18})
-                fmt_kpi = wb.add_format({"bold": True, "font_size": 14, "bg_color": "#EEF3FF", "border":1})
-                fmt_hdr = wb.add_format({"bold": True, "bg_color": "#DCE6F1", "border":1})
-                fmt_num = wb.add_format({"num_format": "#,##0.00", "border":1})
-                fmt_int = wb.add_format({"num_format": "#,##0", "border":1})
-
-                sheet = wb.add_worksheet("Summary")
-                sheet.write(0,0, bi("İşçilik Özet Raporu","Сводный отчёт по трудозатратам"), fmt_title)
-
-                data = st.session_state.get("calculation_results") or {}
-                total_pm = float(data.get("person_months_total", 0.0))
-                roles_df = st.session_state.get("roles_calc_df", pd.DataFrame())
-                elements_df = st.session_state.get("elements_df", pd.DataFrame())
-
-                sheet.write(2,0, bi("Toplam Adam-Ay","Всего чел-месяцев"), fmt_kpi); sheet.write_number(2,1, total_pm, fmt_kpi)
-                sheet.write(3,0, bi("Rol sayısı","Кол-во ролей"), fmt_kpi); sheet.write_number(3,1, 0 if roles_df is None or roles_df is pd.DataFrame() or roles_df.empty else len(roles_df), fmt_kpi)
-                sheet.write(4,0, bi("Eleman sayısı","Кол-во элементов"), fmt_kpi); sheet.write_number(4,1, 0 if elements_df is None or elements_df is pd.DataFrame() or elements_df.empty else len(elements_df), fmt_kpi)
-
-                if elements_df is not None and not elements_df.empty:
-                    elements_df.to_excel(xw, sheet_name="Elements", index=False)
-                    ws = xw.sheets["Elements"]
-                    for col_i, col in enumerate(elements_df.columns):
-                        ws.write(0, col_i, str(col), fmt_hdr)
-                    ws.set_column(0, len(elements_df.columns)-1, 18, fmt_num)
-                if roles_df is not None and not roles_df.empty:
-                    roles_df.to_excel(xw, sheet_name="Roles", index=False)
-                    ws2 = xw.sheets["Roles"]
-                    for col_i, col in enumerate(roles_df.columns):
-                        ws2.write(0, col_i, str(col), fmt_hdr)
-                    ws2.set_column(0, len(roles_df.columns)-1, 18, fmt_num)
-
-            st.download_button(
-                bi("📥 Excel İndir (.xlsx)","📥 Скачать Excel (.xlsx)"),
-                data=buf.getvalue(),
-                file_name="yonetici_ozeti.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        except Exception as e:
-            st.error(bi(f"Excel oluşturma hatası: {e}", f"Ошибка формирования Excel: {e}"))
 # ==================== 7) ASİSTAN: GPT Öneri + Oran Kontrol + RAG + DEV CONSOLE ====================
 with tab_asistan:
     # ---------- GPT öneri / web doğrulama (mevcut) ----------
@@ -4292,38 +3544,38 @@ with tab_asistan:
                 st.warning("Çevrimiçi doğrulama yapılamadı (ya da anahtar eksik).")
 
     # ---------- RAG ----------
-    bih("📚 RAG: Dosya yükle → indeksle → ara","📚 RAG: загрузить → проиндексировать → искать", level=3)
-    uploads = st.file_uploader(bi("Dosya yükle (.txt, .csv, .xlsx)","Загрузить файлы (.txt, .csv, .xlsx)"), type=["txt","csv","xlsx"], accept_multiple_files=True, key="rag_up")
+    st.markdown("### 📚 RAG: Dosya yükle → indeksle → ara")
+    uploads = st.file_uploader("Dosya yükle (.txt, .csv, .xlsx)", type=["txt","csv","xlsx"], accept_multiple_files=True, key="rag_up")
     cR1, cR2, cR3 = st.columns(3)
     with cR1:
-        if st.button(bi("📥 İndeksle (Embed + Kaydet)","📥 Проиндексировать (эмбед + сохранить)")):
+        if st.button("📥 İndeksle (Embed + Kaydet)"):
             if not uploads:
-                st.warning(bi("Dosya seçin.","Выберите файл(ы)."))
+                st.warning("Dosya seçin.")
             else:
                 chunks=[]
                 for up in uploads: chunks += file_to_chunks(up)
                 if not chunks:
-                    st.warning(bi("Parça yok.","Нет фрагментов."))
+                    st.warning("Parça yok.")
                 else:
                     texts=[c["text"] for c in chunks]
                     embs=embed_texts(texts)
                     if not embs:
-                        st.error(bi("Embed alınamadı (OpenAI anahtarı gerekli).","Не удалось получить эмбеддинги (нужен ключ OpenAI)."))
+                        st.error("Embed alınamadı (OpenAI anahtarı gerekli).")
                     else:
                         recs=[{"id":str(uuid.uuid4()),"text":t,"embedding":e,"meta":c.get("meta",{})} for t,e,c in zip(texts,embs,chunks)]
-                        save_rag_records(recs); st.success(bi(f"İndekslendi: {len(recs)}", f"Проиндексировано: {len(recs)}"))
+                        save_rag_records(recs); st.success(f"İndekslendi: {len(recs)}")
     with cR2:
-        if st.button(bi("🧹 RAG temizle","🧹 Очистить RAG")):
+        if st.button("🧹 RAG temizle"):
             ensure_rag_dir()
             try:
                 if os.path.exists(RAG_FILE): os.remove(RAG_FILE)
                 open(RAG_FILE,"a").close()
-                st.success(bi("RAG temizlendi.","RAG очищен."))
+                st.success("RAG temizlendi.")
             except Exception as e:
-                st.error(bi(f"Hata: {e}", f"Ошибка: {e}"))
+                st.error(f"Hata: {e}")
     with cR3:
-        q = st.text_input(bi("🔎 RAG' de ara","🔎 Поиск в RAG"), value=st.session_state.get("rag_q",""))
-        if st.button(bi("Ara","Найти"), key="rag_search_btn"):
+        q = st.text_input("🔎 RAG' de ara", value=st.session_state.get("rag_q",""))
+        if st.button("Ara", key="rag_search_btn"):
             hits = rag_search(q.strip(), topk=6) if q.strip() else []
             st.session_state["rag_hits"] = hits or []
     for it in st.session_state.get("rag_hits", []):
@@ -4331,7 +3583,7 @@ with tab_asistan:
         st.code(it.get("text","")[:700])
 
     # ---------- 💬 GPT Dev Console (Kod Yöneticisi) ----------
-    bih("💬 GPT Dev Console (Kod Yöneticisi)","💬 GPT Dev Console (управление кодом)", level=3)
+    st.markdown("### 💬 GPT Dev Console (Kod Yöneticisi)")
     st.caption("Buradan GPT'ye doğal dille komut ver: değişiklik teklifini JSON patch olarak çıkarır; **sen onaylamadan uygulanmaz**.")
 
     # küçük yardımcılar (lokal — Part 1'e dokunmuyoruz)
@@ -4390,12 +3642,12 @@ with tab_asistan:
     st.caption(f"Dosya uzunluğu: {len(file_text):,} karakter".replace(",", " "))
 
     # seçenekler
-    part_choice = st.selectbox(bi("Değişiklik kapsamı","Область изменений"), ["PART2 (UI)", "PART1 (Helpers/Tax/Logic)", "PART3 (Hesap/Çıktı)", "WHOLE FILE"], index=0)
+    part_choice = st.selectbox("Değişiklik kapsamı", ["PART2 (UI)", "PART1 (Helpers/Tax/Logic)", "PART3 (Hesap/Çıktı)", "WHOLE FILE"], index=0)
     part_key = {"PART2 (UI)":"PART2","PART1 (Helpers/Tax/Logic)":"PART1","PART3 (Hesap/Çıktı)":"PART3","WHOLE FILE":"WHOLE"}[part_choice]
 
-    protect_crit = st.toggle(bi("🛡️ Kritik alanları koru (vergi/prim sabitleri vs.)","🛡️ Защитить критичные разделы (ставки налогов/взносов и т.п.)"), value=st.session_state.get("protect_crit", True))
+    protect_crit = st.toggle("🛡️ Kritik alanları koru (vergi/prim sabitleri vs.)", value=st.session_state.get("protect_crit", True))
     st.session_state["protect_crit"] = protect_crit
-    dry_run = st.toggle(bi("🧪 Önce sandboxa yaz (dry-run)","🧪 Сначала записать в песочницу (dry-run)"), value=st.session_state.get("dry_run", True))
+    dry_run = st.toggle("🧪 Önce sandboxa yaz (dry-run)", value=st.session_state.get("dry_run", True))
     st.session_state["dry_run"] = dry_run
 
     # bağlamı oluştur
@@ -4417,13 +3669,13 @@ with tab_asistan:
     if protect_crit:
         guard_text += "6) NDFL_*, OPS/OSS/OMS, NSIPZ_*, SNG_PATENT_MONTH, *_TAXED_BASE, CASH_COMMISSION_RATE sabitlerini DEĞİŞTİRME.\n"
 
-    bih("🗣️ GPT'ye Komutun","🗣️ Команда для GPT", level=4)
-    user_cmd = st.text_area(bi("Prompt","Промпт"), height=160, key="dev_prompt",
-                            placeholder="Örn: 'Asistan sekmesindeki RAG bloğunun başına kısa bir açıklama ekle ve tablo fontunu %10 büyüt.' / Пример: 'Добавь краткое описание в блок RAG и увеличь шрифт таблицы на 10%'.")
+    st.markdown("#### 🗣️ GPT'ye Komutun")
+    user_cmd = st.text_area("Prompt", height=160, key="dev_prompt",
+                            placeholder="Örn: 'Asistan sekmesindeki RAG bloğunun başına kısa bir açıklama ekle ve tablo fontunu %10 büyüt.'")
 
-    if st.button(bi("🧩 Patch Önerisi Üret","🧩 Сгенерировать patch"), disabled=not gpt_can):
+    if st.button("🧩 Patch Önerisi Üret", disabled=not gpt_can):
         if not user_cmd.strip():
-            st.warning(bi("Bir komut yaz.","Введите команду."))
+            st.warning("Bir komut yaz.")
         else:
             client = get_openai_client()
             try:
@@ -4443,16 +3695,16 @@ with tab_asistan:
                 raw = r.choices[0].message.content or "{}"
                 try:
                     st.session_state["dev_patch_json"] = json.loads(extract_json_block(raw))
-                    st.success(bi("Patch alındı.","Patch получен."))
+                    st.success("Patch alındı.")
                 except Exception:
-                    st.error(bi("JSON parse edilemedi. Dönen içerik:","JSON не разобран. Ответ:"))
+                    st.error("JSON parse edilemedi. Dönen içerik:")
                     st.code(raw)
             except Exception as e:
                 st.error(f"Hata: {e}")
 
     patch = st.session_state.get("dev_patch_json")
     if patch:
-        bih("📦 Patch JSON","📦 Патч JSON", level=4)
+        st.markdown("#### 📦 Patch JSON")
         st.code(json.dumps(patch, ensure_ascii=False, indent=2), language="json")
 
         # tek dosya/sıralı replace_between desteği
@@ -4479,13 +3731,13 @@ with tab_asistan:
                     st.error(f"Desteklenmeyen mode: {mode}")
 
             diff = _diff(file_text, new_text_total, fname=os.path.basename(target_path))
-            bih("🧮 Diff","🧮 Разница", level=4)
+            st.markdown("#### 🧮 Diff")
             st.code(diff or "# (fark yok)")
 
             # Uygula / İptal
             cA, cB, cC = st.columns(3)
             with cA:
-                if st.button(bi("✅ Uygula (yedek alarak)","✅ Применить (с резервной копией)")):
+                if st.button("✅ Uygula (yedek alarak)"):
                     # yedekle
                     bdir = "_gpt_backups"; _ensure_dir(bdir)
                     bname = f"{os.path.basename(target_path)}.{_ts()}.bak"
@@ -4503,22 +3755,22 @@ with tab_asistan:
                         st.success("Uygulandı. (Değişiklikler aktif olması için uygulamayı yeniden çalıştırmanız gerekebilir.)")
                         # Tabloları korumak için rerun kullanmıyoruz
             with cB:
-                if st.button(bi("🗑️ Patch'i sil","🗑️ Удалить patch")):
+                if st.button("🗑️ Patch'i sil"):
                     st.session_state.pop("dev_patch_json", None)
-                    st.info(bi("Patch silindi.","Patch удалён."))
+                    st.info("Patch silindi.")
             with cC:
-                if st.button(bi("↩️ Son yedeği geri yükle","↩️ Восстановить последний бэкап")):
+                if st.button("↩️ Son yedeği geri yükle"):
                     bdir = "_gpt_backups"
                     if not os.path.isdir(bdir):
-                        st.warning(bi("Yedek klasörü yok.","Папка с бэкапами отсутствует."))
+                        st.warning("Yedek klasörü yok.")
                     else:
                         files = sorted([f for f in os.listdir(bdir) if f.startswith(os.path.basename(target_path))], reverse=True)
                         if not files:
-                            st.warning(bi("Geri yüklenecek yedek bulunamadı.","Нет резервных копий для восстановления."))
+                            st.warning("Geri yüklenecek yedek bulunamadı.")
                         else:
                             last_bak = os.path.join(bdir, files[0])
                             _write_text(target_path, _read_text(last_bak))
-                            st.success(bi(f"Geri yüklendi: {files[0]}", f"Восстановлено: {files[0]}"))
+                            st.success(f"Geri yüklendi: {files[0]}")
                             # Tabloları korumak için rerun kullanmıyoruz
         except Exception as e:
             st.error(f"Patch uygula hazırlığında hata: {e}")
@@ -4548,13 +3800,6 @@ hours_per_day= float(st.session_state.get("hours_per_day",10.0))
 scenario     = st.session_state.get("scenario","Gerçekçi")
 
 
-
-# --- Difficulty multiplier: single source of truth ---
-def get_difficulty_multiplier_cached() -> float:
-    try:
-        return float(st.session_state.get("_diff_total_mult_cache", 1.0))
-    except Exception:
-        return 1.0
 
 # Zorluk çarpanı tek merkezden hesaplanır ve cache'e yazılır
 z_mult = get_difficulty_multiplier_cached()
@@ -4741,6 +3986,7 @@ BETA_DIFFICULTY_TO_PRICE= 1.0    # 0..1 (1=tam, 0=sızdırma)
 
 price_mult = (1 + BETA_SCENARIO_TO_PRICE  * (s_mult - 1)) \
            * (1 + BETA_DIFFICULTY_TO_PRICE* (z_mult - 1))
+
 bare_as_price        *= price_mult
 with_extras_as_price *= price_mult
 
