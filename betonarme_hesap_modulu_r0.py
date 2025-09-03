@@ -1561,25 +1561,117 @@ def get_openai_client():
     if not (_OPENAI_AVAILABLE and api_key): return None
     return OpenAI(api_key=api_key)
 
-def gpt_propose_params(payload: dict, model: str = "gpt-4o-mini") -> dict|None:
+def gpt_propose_params(payload: dict, model: str = "gpt-4o") -> dict|None:
     client = get_openai_client()
     if client is None: return None
-    system = "Kıdemli şantiye maliyet şefisin. Sadece JSON yanıt ver. Yüzdeler 0-100 sayı."
-    user = ("Aşağıdaki proje parametrelerine göre makul ayar öner.\n"
-            'Şema: {"consumables_pct": number, "overhead_pct": number, "hours_per_day": number, '
-            '"scenario": "İdeal|Gerçekçi|Kötü", '
-            '"reasons": {"consumables": string, "overhead": string, "hours": string, "scenario": string}}\n\n'
-            f"VERİ: {json.dumps(payload, ensure_ascii=False)}")
+    
+    # Moskova odaklı sistem promptu - güvenli tarafta kalma mantığı
+    system = """Sen Moskova'da 15+ yıl deneyimli kıdemli şantiye maliyet analisti ve proje yöneticisisin. 
+    
+    MOSKOVA ŞANTİYE GERÇEKLERİ:
+    - İşçilik maliyetleri yüksek (2024: 80-120 bin RUB/ay)
+    - Sarf malzemeleri pahalı (tel, disk, gaz vb.)
+    - Kış koşulları zorlu (donma, kar, buz)
+    - İşçi verimliliği düşük (dil bariyeri, eğitim eksikliği)
+    - Güvenlik standartları katı
+    - Denetim ve kontrol sıkı
+    
+    GÜVENLİ TARAFA KALMA MANTIĞI:
+    - Her zaman %10-15 ekstra maliyet buffer'ı
+    - İşçi verimliliğini düşük hesapla
+    - Sarf malzemelerini fazla hesapla
+    - Genel giderleri yüksek tut
+    - Beklenmeyen giderler için rezerv bırak
+    
+    ANALİZ KRİTERLERİN:
+    1. Moskova şantiye koşulları ve zorlukları
+    2. İşçi deneyimi ve eğitim seviyesi
+    3. Mevsimsel etkiler (kış, yaz, yağmur)
+    4. Ekipman ve teknoloji kullanımı
+    5. Güvenlik ve kalite gereksinimleri
+    6. Denetim ve kontrol maliyetleri
+    7. Beklenmeyen giderler ve riskler
+    
+    Sadece JSON formatında yanıt ver. Tüm yüzdeler 0-100 arasında sayısal değerler olmalı."""
+    
+    # RAG bağlamını al
+    rag_context = ""
+    if "rag_hits" in st.session_state and st.session_state["rag_hits"]:
+        rag_context = "\n\nRAG BAĞLAMI:\n" + "\n".join([
+            f"[{i+1}] {hit.get('meta', {}).get('filename', '?')}: {hit.get('text', '')[:500]}"
+            for i, hit in enumerate(st.session_state["rag_hits"][:3])
+        ])
+    
+    # Gelişmiş kullanıcı promptu - Moskova odaklı ve detaylı açıklamalar
+    user = f"""Aşağıdaki betonarme proje parametrelerini Moskova şantiye gerçeklerine göre detaylı analiz et ve güvenli tarafta kalacak öneriler sun. Her gerekçeyi uzun uzun açıkla.
+
+PROJE VERİLERİ:
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+
+MOSKOVA ŞANTİYE DETAYLI ANALİZİ İSTENEN:
+1. Sarf malzemeleri oranı (unutulan malzemeler dahil) - DETAYLI GEREKÇE
+2. Genel gider oranı (unutulan giderler dahil) - DETAYLI GEREKÇE
+3. Indirect giderler analizi (toplam maliyete oranı: az/makul/çok) - DETAYLI GEREKÇE
+4. Günlük çalışma saati (verimlilik analizi) - DETAYLI GEREKÇE
+5. Senaryo seçimi (güvenli tarafta kalma) - DETAYLI GEREKÇE
+6. İşçi dağılımı analizi (demirci, kalıpçı, düz işçi oranları) - DETAYLI GEREKÇE
+7. Eksik sarf malzemeleri listesi
+8. Eksik genel giderler listesi
+9. Eksik indirect giderler listesi
+
+{rag_context}
+
+YANIT ŞEMASI:
+{{
+    "consumables_pct": number,
+    "overhead_pct": number, 
+    "hours_per_day": number,
+    "scenario": "İdeal|Gerçekçi|Kötü",
+    "confidence_score": number,
+    "risk_level": "Düşük|Orta|Yüksek",
+    "safety_margin": number, // Güvenlik payı yüzdesi
+    "reasons": {{
+        "consumables": "ÇOK DETAYLI sarf malzemeleri analizi ve eksikler - en az 200 kelime",
+        "overhead": "ÇOK DETAYLI genel gider analizi ve eksik giderler - en az 200 kelime", 
+        "hours": "ÇOK DETAYLI çalışma saati ve verimlilik analizi - en az 200 kelime",
+        "scenario": "ÇOK DETAYLI senaryo seçimi gerekçesi - en az 200 kelime"
+    }},
+    "missing_items": {{
+        "consumables": ["Eksik sarf malzemeleri listesi"],
+        "overhead": ["Eksik genel giderler listesi"],
+        "indirect": ["Eksik indirect giderler listesi"]
+    }},
+    "worker_distribution": {{
+        "demirci_ratio": number, // Demirci oranı (%)
+        "kalipci_ratio": number, // Kalıpçı oranı (%)
+        "duz_isci_ratio": number, // Düz işçi oranı (%)
+        "analysis": "ÇOK DETAYLI işçi dağılımı analizi ve öneriler - en az 200 kelime"
+    }},
+    "moscow_specific": {{
+        "winter_impact": "ÇOK DETAYLI kış koşullarının etkisi - en az 150 kelime",
+        "efficiency_factors": "ÇOK DETAYLI verimlilik etkileyen faktörler - en az 150 kelime",
+        "safety_requirements": "ÇOK DETAYLI güvenlik gereksinimleri - en az 150 kelime",
+        "additional_costs": "ÇOK DETAYLI ek maliyetler ve rezervler - en az 150 kelime"
+    }},
+    "indirect_analysis": {{
+        "total_indirect_rate": number, // Toplam indirect oranı
+        "total_cost_ratio": number, // Toplam maliyete oranı
+        "assessment": "az|makul|çok", // Indirect giderlerin değerlendirmesi
+        "detailed_analysis": "ÇOK DETAYLI indirect giderler analizi - en az 300 kelime"
+    }}
+}}"""
+    
     try:
         r = client.chat.completions.create(
-            model=model, temperature=0.2,
+            model=model, temperature=0.1,  # Daha tutarlı sonuçlar için düşük temperature
             messages=[{"role":"system","content":system},{"role":"user","content":user}]
         )
         return json.loads(extract_json_block(r.choices[0].message.content))
-    except Exception:
+    except Exception as e:
+        st.error(f"GPT analizi hatası: {e}")
         return None
 
-def gpt_verify_rates_via_web(queries: list[str], model: str="gpt-4o-mini") -> dict|None:
+def gpt_verify_rates_via_web(queries: list[str], model: str="gpt-4o") -> dict|None:
     client = get_openai_client()
     if client is None: return None
     tavily_key = (st.session_state.get("TAVILY_API_KEY","") or os.getenv("TAVILY_API_KEY",""))
@@ -3954,82 +4046,446 @@ with tab_sonuclar:
         data = results["data"]
         
         # Ana metrikler - Modern kartlar
-        bih("💰 Adam-Saat Fiyatları","💰 Стоимость человеко-часа", level=2)
+        # Profesyonel Hesap Sonuçları Dashboard
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 2rem; border-radius: 20px; margin-bottom: 2rem; text-align: center; border: 1px solid #dee2e6;">
+            <h2 style="color: #495057; margin: 0; font-size: 2.5rem; font-weight: 600;">📊 HESAP SONUÇLARI DASHBOARD</h2>
+            <p style="color: #6c757d; margin: 1rem 0 0 0; font-size: 1.1rem;">
+                Moskova Şantiye Gerçeklerine Göre Profesyonel Maliyet Analizi ve Proje Özeti
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 1. Adam-Saat Fiyatları Bölümü
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 1.5rem; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #dee2e6;">
+            <h3 style="color: #495057; margin: 0; text-align: center; font-size: 1.8rem; font-weight: 600;">💰 ADAM-SAAT FİYATLARI</h3>
+            <p style="color: #6c757d; margin: 0.5rem 0 0 0; text-align: center; font-size: 1rem;">
+                Farklı Maliyet Seviyelerinde Profesyonel Fiyatlandırma
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Adam-Saat Fiyatları - 3 Sütunlu Modern Layout
         col1, col2, col3 = st.columns(3)
+        
         with col1:
             st.markdown(f"""
-            <div class="metric-card">
-                <h3>🏃 Çıplak a·s Fiyatı / Базовая цена ч·ч</h3>
-                <div class="val">{data['bare_as_price']:,.2f} ₽/a·s</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>🍽️ Genel Giderli a·s / С ч·ч с общими расходами</h3>
-                <div class="val">{data['with_extras_as_price']:,.2f} ₽/a·s</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>🎯 Her Şey Dahil a·s / Полная ч·ч (всё включено)</h3>
-                <div class="val">{data['fully_loaded_as_price']:,.2f} ₽/a·s</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Proje özeti - Modern kartlar
-        bih("🏗️ Proje Özeti","🏗️ Сводка проекта", level=3)
-        colA, colB, colC = st.columns(3)
-        with colA:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>⏰ Toplam Adam-Saat / Итого ч·ч</h3>
-                <div class="val">{data['total_adamsaat']:,.2f} чел·ч</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with colB:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>📏 m³ Başına Ort. a·s / Ср. ч·ч на м³</h3>
-                <div class="val">{data['avg_norm_per_m3']:,.2f} a·s/m³</div>
-            </div>
-            """, unsafe_allow_html=True)
-        with colC:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>💰 Genel Ortalama / Среднее по проекту</h3>
-                <div class="val">{data['general_avg_m3']:,.2f} ₽/m³</div>
+            <div style="background: #ffffff; padding: 1.5rem; border-radius: 12px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1.2rem; font-weight: 600;">🏃 Çıplak Adam-Saat</h4>
+                <p style="color: #212529; font-size: 2rem; font-weight: 700; margin: 1rem 0;">{data['bare_as_price']:,.2f} ₽</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.9rem;">Temel Maliyet / Базовая стоимость</p>
             </div>
             """, unsafe_allow_html=True)
         
-        colD, colE = st.columns(2)
-        with colD:
+        with col2:
             st.markdown(f"""
-            <div class="metric-card">
-                <h3>📊 Toplam Metraj / Общий объём</h3>
-                <div class="val">{data['total_metraj']:,.3f} m³</div>
+            <div style="background: #ffffff; padding: 1.5rem; border-radius: 12px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1.2rem; font-weight: 600;">🍽️ Genel Giderli Adam-Saat</h4>
+                <p style="color: #212529; font-size: 2rem; font-weight: 700; margin: 1rem 0;">{data['with_extras_as_price']:,.2f} ₽</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.9rem;">Yemek + Barınma + Ulaşım / Питание + Жильё + Транспорт</p>
             </div>
             """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown(f"""
+            <div style="background: #ffffff; padding: 1.5rem; border-radius: 12px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1.2rem; font-weight: 600;">🎯 Her Şey Dahil Adam-Saat</h4>
+                <p style="color: #212529; font-size: 2rem; font-weight: 700; margin: 1rem 0;">{data['fully_loaded_as_price']:,.2f} ₽</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.9rem;">Tüm Giderler Dahil / Все расходы включены</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # 2. Proje Özeti Bölümü
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 1.5rem; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #dee2e6;">
+            <h3 style="color: #495057; margin: 0; text-align: center; font-size: 1.8rem; font-weight: 600;">🏗️ PROJE ÖZETİ</h3>
+            <p style="color: #6c757d; margin: 0.5rem 0 0 0; text-align: center; font-size: 1rem;">
+                Kapsamlı Proje Metrikleri ve Performans Göstergeleri
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Proje Özeti - 5 Sütunlu Modern Layout
+        colA, colB, colC, colD, colE = st.columns(5)
+        
+        with colA:
+            st.markdown(f"""
+            <div style="background: #ffffff; padding: 1.2rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1rem; font-weight: 600;">⏰ Toplam Adam-Saat</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{data['total_adamsaat']:,.0f}</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.8rem;">чел·ч</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with colB:
+            st.markdown(f"""
+            <div style="background: #ffffff; padding: 1.2rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1rem; font-weight: 600;">📏 m³ Başına Ort. a·s</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{data['avg_norm_per_m3']:,.2f}</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.8rem;">a·s/m³</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with colC:
+            st.markdown(f"""
+            <div style="background: #ffffff; padding: 1.2rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1rem; font-weight: 600;">💰 Genel Ortalama</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{data['general_avg_m3']:,.2f}</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.8rem;">₽/m³</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with colD:
+            st.markdown(f"""
+            <div style="background: #ffffff; padding: 1.2rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1rem; font-weight: 600;">📊 Toplam Metraj</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{data['total_metraj']:,.1f}</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.8rem;">m³</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
         with colE:
             st.markdown(f"""
-            <div class="metric-card">
-                <h3>💵 Toplam Maliyet / Общая стоимость</h3>
-                <div class="val">{data['project_total_cost']:,.2f} ₽</div>
+            <div style="background: #ffffff; padding: 1.2rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-size: 1rem; font-weight: 600;">💵 Toplam Maliyet</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{data['project_total_cost']:,.0f}</p>
+                <p style="color: #6c757d; margin: 0; font-size: 0.8rem;">₽</p>
             </div>
             """, unsafe_allow_html=True)
 
         # Loading mesajını gizle
         clear_loading_placeholder()
         
-        # Oranlar
-        bih("📊 Etkili Oranlar","📊 Эффективные доли", level=3)
-        st.markdown(bi(f"**🧴 Sarf:** {data['consumables_rate_eff']*100:.2f}%",
-                       f"**🧴 Расходники:** {data['consumables_rate_eff']*100:.2f}%"))
-        st.markdown(bi(f"**🧮 Overhead:** {data['overhead_rate_eff']*100:.2f}%",
-                       f"**🧮 Overhead:** {data['overhead_rate_eff']*100:.2f}%"))
-        st.markdown(f"**🧾 Indirect:** {data['indirect_rate_total']*100:.2f}%")
-        st.markdown(f"**Indirect toplam:** {data['indirect_total']:,.2f} ₽ · **Pay:** {data['indirect_share']:.1%}")
+        # Toplam oranlar hesaplama (Indirect hariç)
+        total_rate = (data['consumables_rate_eff'] + data['overhead_rate_eff']) * 100
+        total_cost = data['project_total_cost']
+        
+        # Sorumluluk matrisi verilerini kontrol et
+        use_matrix_override = st.session_state.get("use_matrix_override", False)
+        matrix_data = None
+        if use_matrix_override:
+            # Sorumluluk matrisi verilerini al
+            matrix_data = {
+                "consumables": st.session_state.get("consumables_rate_eff", 0) * 100,
+                "overhead": st.session_state.get("overhead_rate_eff", 0) * 100,
+                "indirect": st.session_state.get("indirect_rate_total_eff", 0) * 100
+            }
+        
+        # Profesyonel Maliyet Analizi Dashboard
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem;">
+            <h3 style="color: white; margin: 0; text-align: center;">📊 PROFESYONEL MALİYET ANALİZİ DASHBOARD</h3>
+            <p style="color: white; opacity: 0.9; margin: 0.5rem 0 0 0; text-align: center; font-size: 0.9rem;">
+                Moskova Şantiye Gerçeklerine Göre Detaylı Maliyet Dağılımı ve Sorumluluk Matrisi Entegrasyonu
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Ana Metrikler - 4 Sütunlu Profesyonel Layout
+        col_main1, col_main2, col_main3, col_main4 = st.columns(4)
+        
+        with col_main1:
+            st.markdown("""
+            <div style="background: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-weight: 600;">💰 Toplam Proje Maliyeti</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{total_cost:,.0f} ₽</p>
+            </div>
+            """.format(total_cost=total_cost), unsafe_allow_html=True)
+        
+        with col_main2:
+            st.markdown("""
+            <div style="background: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-weight: 600;">📈 Toplam Oranlar</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{total_rate:.2f}%</p>
+                <p style="color: #6c757d; font-size: 0.8rem; margin: 0;">Sarf + Overhead</p>
+            </div>
+            """.format(total_rate=total_rate), unsafe_allow_html=True)
+        
+        with col_main3:
+            indirect_rate = data['indirect_rate_total'] * 100
+            st.markdown("""
+            <div style="background: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-weight: 600;">🧾 Indirect Oranı</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{indirect_rate:.2f}%</p>
+                <p style="color: #6c757d; font-size: 0.8rem; margin: 0;">Toplam Maliyete Oran</p>
+            </div>
+            """.format(indirect_rate=indirect_rate), unsafe_allow_html=True)
+        
+        with col_main4:
+            total_all_rates = total_rate + indirect_rate
+            st.markdown("""
+            <div style="background: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
+                <h4 style="color: #495057; margin: 0; font-weight: 600;">🎯 Toplam Tüm Oranlar</h4>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{total_all_rates:.2f}%</p>
+                <p style="color: #6c757d; font-size: 0.8rem; margin: 0;">Sarf + Overhead + Indirect</p>
+            </div>
+            """.format(total_all_rates=total_all_rates), unsafe_allow_html=True)
+        
+        # Sorumluluk Matrisi Entegrasyonu
+        if matrix_data:
+            st.markdown("---")
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; border: 1px solid #dee2e6;">
+                <h4 style="color: #495057; margin: 0; text-align: center; font-weight: 600;">🔗 SORUMLULUK MATRİSİ ENTEGRASYONU AKTİF</h4>
+                <p style="color: #6c757d; margin: 0.5rem 0 0 0; text-align: center; font-size: 0.9rem;">
+                    Manuel oranlar yerine Sorumluluk Matrisi toplamları kullanılıyor
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col_matrix1, col_matrix2, col_matrix3 = st.columns(3)
+            
+            with col_matrix1:
+                st.metric(
+                    "🧴 Matris Sarf",
+                    f"{matrix_data['consumables']:.2f}%",
+                    delta=f"{matrix_data['consumables'] - (data['consumables_rate_eff'] * 100):.2f}%",
+                    delta_color="normal"
+                )
+            
+            with col_matrix2:
+                st.metric(
+                    "🧮 Matris Overhead",
+                    f"{matrix_data['overhead']:.2f}%",
+                    delta=f"{matrix_data['overhead'] - (data['overhead_rate_eff'] * 100):.2f}%",
+                    delta_color="normal"
+                )
+            
+            with col_matrix3:
+                st.metric(
+                    "🧾 Matris Indirect",
+                    f"{matrix_data['indirect']:.2f}%",
+                    delta=f"{matrix_data['indirect'] - (data['indirect_rate_total'] * 100):.2f}%",
+                    delta_color="normal"
+                )
+        
+        # Detaylı Maliyet Dağılımı Analizi
+        st.markdown("---")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; border: 1px solid #dee2e6;">
+            <h4 style="color: #495057; margin: 0; text-align: center; font-weight: 600;">📊 DETAYLI MALİYET DAĞILIMI ANALİZİ</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Oranların dağılımı hesaplama
+        sarf_share = (data['consumables_rate_eff'] * 100) / total_rate * 100
+        overhead_share = (data['overhead_rate_eff'] * 100) / total_rate * 100
+        
+        # Toplam proje maliyetine göre gider dağılımı hesaplama
+        total_project_cost = data['project_total_cost']
+        
+        # Her giderin toplam maliyete göre yüzdesi
+        sarf_cost = data['consumables_rate_eff'] * total_project_cost
+        overhead_cost = data['overhead_rate_eff'] * total_project_cost
+        indirect_cost = data['indirect_rate_total'] * total_project_cost
+        
+        # Toplam maliyete göre yüzdeler
+        sarf_percent_of_total = (sarf_cost / total_project_cost) * 100
+        overhead_percent_of_total = (overhead_cost / total_project_cost) * 100
+        indirect_percent_of_total = (indirect_cost / total_project_cost) * 100
+        
+        # Pasta grafikleri için veri hazırlama
+        import matplotlib.pyplot as plt
+        
+        # 1. Ana Maliyet Dağılımı Pasta Grafiği (Sarf + Overhead'in kendi arasındaki dağılımı)
+        col_pie1, col_pie2 = st.columns(2)
+        
+        with col_pie1:
+            st.markdown("**🍰 Sarf ve Overhead Dağılımı (Kendi Aralarında)**")
+            
+            # Pasta grafik verileri - kendi aralarındaki dağılım
+            pie_labels = ['Sarf Malzemeleri', 'Genel Giderler']
+            pie_sizes = [data['consumables_rate_eff'] * 100, data['overhead_rate_eff'] * 100]
+            pie_colors = ['#ff9999', '#66b3ff']
+            
+            # Pasta grafik oluştur
+            fig, ax = plt.subplots(figsize=(8, 6))
+            wedges, texts, autotexts = ax.pie(pie_sizes, labels=pie_labels, colors=pie_colors, 
+                                            autopct='%1.1f%%', startangle=90)
+            ax.set_title('Sarf ve Overhead Dağılımı', fontsize=14, fontweight='bold')
+            
+            # Grafik stilini ayarla
+            plt.setp(autotexts, size=10, weight="bold")
+            plt.setp(texts, size=12)
+            
+            st.pyplot(fig)
+            plt.close()
+        
+        with col_pie2:
+            st.markdown("**🎯 Toplam Proje Maliyetine Göre Dağılım**")
+            
+            # Toplam proje maliyetine göre dağılım
+            total_pie_labels = ['Sarf Malzemeleri', 'Genel Giderler', 'Indirect Giderler', 'Ana Maliyet']
+            total_pie_sizes = [
+                sarf_percent_of_total,
+                overhead_percent_of_total,
+                indirect_percent_of_total,
+                100 - (sarf_percent_of_total + overhead_percent_of_total + indirect_percent_of_total)
+            ]
+            total_pie_colors = ['#ff9999', '#66b3ff', '#99ff99', '#f0f0f0']
+            
+            # Pasta grafik oluştur
+            fig2, ax2 = plt.subplots(figsize=(8, 6))
+            wedges2, texts2, autotexts2 = ax2.pie(total_pie_sizes, labels=total_pie_labels, colors=total_pie_colors, 
+                                                autopct='%1.1f%%', startangle=90)
+            ax2.set_title('Toplam Proje Maliyetine Göre Dağılım', fontsize=14, fontweight='bold')
+            
+            # Grafik stilini ayarla
+            plt.setp(autotexts2, size=10, weight="bold")
+            plt.setp(texts2, size=12)
+            
+            st.pyplot(fig2)
+            plt.close()
+        
+        # Sorumluluk Matrisi Etkisi Analizi
+        st.markdown("---")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; border: 1px solid #dee2e6;">
+            <h4 style="color: #495057; margin: 0; text-align: center; font-weight: 600;">🔗 SORUMLULUK MATRİSİ MALİYET ETKİSİ ANALİZİ</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Sorumluluk matrisi etkisi hesaplama
+        matrix_impact = {
+            "consumables": 0.0,
+            "overhead": 0.0,
+            "indirect": 0.0,
+            "total_impact": 0.0
+        }
+        
+        if use_matrix_override and matrix_data:
+            # Matris override aktif - etkiyi hesapla
+            matrix_impact["consumables"] = matrix_data['consumables'] - (data['consumables_rate_eff'] * 100)
+            matrix_impact["overhead"] = matrix_data['overhead'] - (data['overhead_rate_eff'] * 100)
+            matrix_impact["indirect"] = matrix_data['indirect'] - (data['indirect_rate_total'] * 100)
+            matrix_impact["total_impact"] = abs(matrix_impact["consumables"]) + abs(matrix_impact["overhead"]) + abs(matrix_impact["indirect"])
+        
+        # Sorumluluk matrisi etkisi gösterimi
+        col_matrix_impact1, col_matrix_impact2 = st.columns(2)
+        
+        with col_matrix_impact1:
+            st.markdown("**📊 Sorumluluk Matrisi Etkisi**")
+            
+            if use_matrix_override and matrix_data:
+                # Etki pasta grafiği
+                impact_labels = ['Sarf Etkisi', 'Overhead Etkisi', 'Indirect Etkisi']
+                impact_sizes = [abs(matrix_impact["consumables"]), abs(matrix_impact["overhead"]), abs(matrix_impact["indirect"])]
+                impact_colors = ['#ff6b6b', '#4ecdc4', '#45b7d1']
+                
+                # Sadece pozitif değerler varsa grafik göster
+                if sum(impact_sizes) > 0:
+                    fig3, ax3 = plt.subplots(figsize=(8, 6))
+                    wedges3, texts3, autotexts3 = ax3.pie(impact_sizes, labels=impact_labels, colors=impact_colors, 
+                                                        autopct='%1.1f%%', startangle=90)
+                    ax3.set_title('Sorumluluk Matrisi Etkisi Dağılımı', fontsize=14, fontweight='bold')
+                    
+                    plt.setp(autotexts3, size=10, weight="bold")
+                    plt.setp(texts3, size=12)
+                    
+                    st.pyplot(fig3)
+                    plt.close()
+                else:
+                    st.info("Sorumluluk matrisi etkisi bulunmuyor.")
+            else:
+                st.info("Sorumluluk matrisi override aktif değil.")
+        
+        with col_matrix_impact2:
+            st.markdown("**📈 Etki Detayları**")
+            
+            if use_matrix_override and matrix_data:
+                st.markdown(f"""
+                <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; border-left: 4px solid #28a745;">
+                    <h5 style="color: #333; margin: 0 0 0.5rem 0;">🔗 Sorumluluk Matrisi Etkisi</h5>
+                    <p style="margin: 0.2rem 0;"><strong>Sarf Etkisi:</strong> {matrix_impact["consumables"]:+.2f}%</p>
+                    <p style="margin: 0.2rem 0;"><strong>Overhead Etkisi:</strong> {matrix_impact["overhead"]:+.2f}%</p>
+                    <p style="margin: 0.2rem 0;"><strong>Indirect Etkisi:</strong> {matrix_impact["indirect"]:+.2f}%</p>
+                    <p style="margin: 0.2rem 0;"><strong>Toplam Mutlak Etki:</strong> {matrix_impact["total_impact"]:.2f}%</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Etki değerlendirmesi
+                if matrix_impact["total_impact"] < 5:
+                    impact_assessment = "Düşük Etki"
+                    impact_color = "#28a745"
+                elif matrix_impact["total_impact"] < 15:
+                    impact_assessment = "Orta Etki"
+                    impact_color = "#ffc107"
+                else:
+                    impact_assessment = "Yüksek Etki"
+                    impact_color = "#dc3545"
+                
+                st.markdown(f"""
+                <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; border-left: 4px solid {impact_color}; margin-top: 1rem;">
+                    <h5 style="color: #333; margin: 0 0 0.5rem 0;">📊 Etki Değerlendirmesi</h5>
+                    <p style="margin: 0.2rem 0;"><strong>Değerlendirme:</strong> {impact_assessment}</p>
+                    <p style="margin: 0.2rem 0;"><strong>Toplam Etki:</strong> {matrix_impact["total_impact"]:.2f}%</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; border-left: 4px solid #6c757d;">
+                    <h5 style="color: #333; margin: 0 0 0.5rem 0;">🔗 Sorumluluk Matrisi Durumu</h5>
+                    <p style="margin: 0.2rem 0;"><strong>Durum:</strong> Override Aktif Değil</p>
+                    <p style="margin: 0.2rem 0;"><strong>Etki:</strong> 0%</p>
+                    <p style="margin: 0.2rem 0;"><strong>Açıklama:</strong> Manuel oranlar kullanılıyor</p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Karşılaştırma ve Değerlendirme
+        st.markdown("---")
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0;">
+            <h4 style="color: #333; margin: 0; text-align: center;">🔍 MOSKOVA ŞANTİYE KARŞILAŞTIRMA VE DEĞERLENDİRME</h4>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Profesyonel değerlendirme kriterleri
+        if total_rate < 20:
+            st.success("""
+            <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+                <h5 style="color: #155724; margin: 0 0 0.5rem 0;">✅ DÜŞÜK ORANLAR - Maliyet Açısından Avantajlı</h5>
+                <p style="color: #155724; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate:.2f}%</p>
+                <p style="color: #155724; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarına göre düşük maliyet</p>
+                <p style="color: #155724; margin: 0.2rem 0;"><strong>Öneri:</strong> Bu oranları koruyarak rekabet avantajı sağlayabilirsiniz</p>
+            </div>
+            """.format(total_rate=total_rate), unsafe_allow_html=True)
+        elif total_rate < 30:
+            st.markdown("""
+            <div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+                <h5 style="color: #0c5460; margin: 0 0 0.5rem 0;">ℹ️ MAKUL ORANLAR - Normal Şantiye Koşulları</h5>
+                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate:.2f}%</p>
+                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye gerçeklerine uygun standart oranlar</p>
+                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Öneri:</strong> Mevcut durumu koruyarak proje yönetimini sürdürün</p>
+            </div>
+            """.format(total_rate=total_rate), unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+                <h5 style="color: #856404; margin: 0 0 0.5rem 0;">⚠️ YÜKSEK ORANLAR - Maliyet Kontrolü Gerekli</h5>
+                <p style="color: #856404; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate:.2f}%</p>
+                <p style="color: #856404; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarının üzerinde maliyet</p>
+                <p style="color: #856404; margin: 0.2rem 0;"><strong>Öneri:</strong> Sorumluluk matrisini gözden geçirerek maliyet optimizasyonu yapın</p>
+            </div>
+            """.format(total_rate=total_rate), unsafe_allow_html=True)
+        
+        # Indirect giderler değerlendirmesi
+        indirect_assessment = ""
+        if data['indirect_share'] < 0.05:
+            indirect_assessment = "Düşük"
+        elif data['indirect_share'] < 0.10:
+            indirect_assessment = "Makul"
+        else:
+            indirect_assessment = "Yüksek"
+        
+        st.markdown(f"""
+        <div style="background: #e2e3e5; border: 1px solid #d6d8db; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+            <h5 style="color: #383d41; margin: 0 0 0.5rem 0;">🧾 Indirect Giderler Değerlendirmesi</h5>
+            <p style="color: #383d41; margin: 0.2rem 0;"><strong>Indirect Toplam:</strong> {data['indirect_total']:,.2f} ₽</p>
+            <p style="color: #383d41; margin: 0.2rem 0;"><strong>Toplam Maliyete Oranı:</strong> {data['indirect_share']:.1%}</p>
+            <p style="color: #383d41; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> {indirect_assessment}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         # Tablolar
         st.markdown("""
@@ -4435,8 +4891,17 @@ with tab_import:
             st.error(bi(f"Excel oluşturma hatası: {e}", f"Ошибка формирования Excel: {e}"))
 # ==================== 7) ASİSTAN: GPT Öneri + Oran Kontrol + RAG + DEV CONSOLE ====================
 with tab_asistan:
-    # ---------- GPT öneri / web doğrulama (mevcut) ----------
-    st.markdown("### 🤖 GPT Öneri Pilotu")
+    # ---------- 🤖 MOSKOVA ODAKLI GPT ANALİZ VE ÖNERİ SİSTEMİ ----------
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+        <h3 style="color: white; margin: 0;">🤖 Moskova Şantiye Analiz Sistemi</h3>
+        <p style="color: white; opacity: 0.9; margin: 0.5rem 0 0 0; font-size: 0.9rem;">
+            Moskova gerçeklerine göre güvenli tarafta kalma analizi ve eksik gider tespiti
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Proje analizi için gelişmiş payload
     payload = {
         "consumables_pct": float((st.session_state.get("consumables_rate_eff",
                                 st.session_state.get("consumables_rate", CONSUMABLES_RATE_DEFAULT/100.0)))*100.0),
@@ -4451,37 +4916,227 @@ with tab_asistan:
             (1+st.session_state.get("f_shared",0.0))*
             (1+st.session_state.get("f_cong",0.0))*
             (1+st.session_state.get("f_pump",0.0))
-        )
+        ),
+        "project_complexity": {
+            "winter_conditions": bool(st.session_state.get("f_winter",0.0) > 0),
+            "heavy_work": bool(st.session_state.get("f_heavy",0.0) > 0),
+            "repetitive_work": bool(st.session_state.get("f_repeat",0.0) > 0),
+            "shared_equipment": bool(st.session_state.get("f_shared",0.0) > 0),
+            "congested_site": bool(st.session_state.get("f_cong",0.0) > 0),
+            "pump_required": bool(st.session_state.get("f_pump",0.0) > 0)
+        }
     }
+    
     gpt_can = get_openai_client() is not None
-    colg1, colg2 = st.columns(2)
-    with colg1:
-        if st.button("🤖 GPT'den öneri iste", disabled=not gpt_can):
+    
+    # Ana analiz butonu - tek buton
+    if st.button("🔍 Moskova Detaylı Analiz", disabled=not gpt_can, type="primary"):
+        with st.spinner("Moskova şantiye detaylı analizi yapılıyor..."):
             resp = gpt_propose_params(payload)
             if not resp:
-                st.error("GPT önerisi alınamadı.")
+                st.error("❌ GPT analizi başarısız oldu. API anahtarını kontrol edin.")
             else:
-                st.json(resp)
-                if st.button("✅ Önerileri uygula (üstteki oranları günceller)"):
-                    st.session_state["consumables_rate"] = float(resp.get("consumables_pct", payload["consumables_pct"]))
-                    st.session_state["overhead_rate"]    = float(resp.get("overhead_pct", payload["overhead_pct"]))
-                    st.session_state["hours_per_day"]    = float(resp.get("hours_per_day", payload["hours_per_day"]))
-                    st.session_state["scenario"]         = str(resp.get("scenario", payload["scenario"]))
-                    st.success("Uygulandı. Yeniden hesaplayın (alt sekmede).")
-    with colg2:
-        if st.button("🌐 İnternetten oranları kontrol et (beta)", disabled=not gpt_can):
-            queries=[
-                "Россия страховые взносы 2024 ОПС ОСС ОМС проценты",
-                "НСиПЗ тариф 2024 Россия производственный травматизм",
-                "НДФЛ ставка Россия 2024",
-                "патент мигранты стоимость в месяц 2024 Россия",
-                "VKS страховые взносы Россия 2024",
-            ]
-            found = gpt_verify_rates_via_web(queries)
-            if found:
-                st.json(found)
-            else:
-                st.warning("Çevrimiçi doğrulama yapılamadı (ya da anahtar eksik).")
+                st.session_state["gpt_analysis"] = resp
+                st.success("✅ Moskova detaylı analizi tamamlandı!")
+    
+    # GPT Analiz Sonuçları Gösterimi
+    if "gpt_analysis" in st.session_state:
+        analysis = st.session_state["gpt_analysis"]
+        
+        st.markdown("### 📋 Moskova Analiz Raporu")
+        
+        # Özet kartları
+        col_summary1, col_summary2, col_summary3, col_summary4 = st.columns(4)
+        
+        with col_summary1:
+            st.metric(
+                "Güvenlik Payı", 
+                f"{analysis.get('safety_margin', 0):.0f}%",
+                delta=f"+{analysis.get('safety_margin', 0):.0f}%"
+            )
+        
+        with col_summary2:
+            risk_level = analysis.get('risk_level', 'Orta')
+            risk_color = {"Düşük": "normal", "Orta": "normal", "Yüksek": "inverse"}.get(risk_level, "normal")
+            st.metric("Risk Seviyesi", risk_level, delta_color=risk_color)
+        
+        with col_summary3:
+            confidence = analysis.get('confidence_score', 0)
+            st.metric(
+                "Güven Skoru", 
+                f"{confidence:.0f}%",
+                delta=f"{confidence - 50:.0f}%"
+            )
+        
+        with col_summary4:
+            scenario = analysis.get('scenario', 'Gerçekçi')
+            st.metric("Önerilen Senaryo", scenario)
+        
+        # Detaylı analiz
+        with st.expander("📊 Moskova Detaylı Analiz", expanded=True):
+            tab_reasons, tab_missing, tab_workers, tab_moscow, tab_indirect, tab_raw = st.tabs([
+                "🎯 Ana Öneriler", "❌ Eksik Giderler", "👥 İşçi Dağılımı", "🏗️ Moskova Özel", "💰 Indirect Analiz", "🔧 Ham Veri"
+            ])
+            
+            with tab_reasons:
+                st.markdown("#### Ana Parametre Önerileri")
+                
+                # Sarf malzemeleri
+                col_cons1, col_cons2 = st.columns([1,2])
+                with col_cons1:
+                    current_cons = payload["consumables_pct"]
+                    suggested_cons = analysis.get("consumables_pct", current_cons)
+                    st.metric("Sarf Malzemeleri", f"{suggested_cons:.1f}%", 
+                             delta=f"{suggested_cons - current_cons:.1f}%")
+                with col_cons2:
+                    st.info(analysis.get("reasons", {}).get("consumables", "Gerekçe belirtilmemiş"))
+                
+                # Genel giderler
+                col_over1, col_over2 = st.columns([1,2])
+                with col_over1:
+                    current_over = payload["overhead_pct"]
+                    suggested_over = analysis.get("overhead_pct", current_over)
+                    st.metric("Genel Giderler", f"{suggested_over:.1f}%",
+                             delta=f"{suggested_over - current_over:.1f}%")
+                with col_over2:
+                    st.info(analysis.get("reasons", {}).get("overhead", "Gerekçe belirtilmemiş"))
+                
+                # Çalışma saati
+                col_hours1, col_hours2 = st.columns([1,2])
+                with col_hours1:
+                    current_hours = payload["hours_per_day"]
+                    suggested_hours = analysis.get("hours_per_day", current_hours)
+                    st.metric("Günlük Çalışma", f"{suggested_hours:.1f} saat",
+                             delta=f"{suggested_hours - current_hours:.1f} saat")
+                with col_hours2:
+                    st.info(analysis.get("reasons", {}).get("hours", "Gerekçe belirtilmemiş"))
+                
+                # Senaryo
+                col_scen1, col_scen2 = st.columns([1,2])
+                with col_scen1:
+                    current_scen = payload["scenario"]
+                    suggested_scen = analysis.get("scenario", current_scen)
+                    st.metric("Senaryo", suggested_scen,
+                             delta="Değişiklik" if suggested_scen != current_scen else "Aynı")
+                with col_scen2:
+                    st.info(analysis.get("reasons", {}).get("scenario", "Gerekçe belirtilmemiş"))
+            
+            with tab_missing:
+                st.markdown("#### Eksik Giderler ve Malzemeler")
+                
+                # Eksik sarf malzemeleri
+                missing_consumables = analysis.get("missing_items", {}).get("consumables", [])
+                if missing_consumables:
+                    st.markdown("**❌ Eksik Sarf Malzemeleri:**")
+                    for item in missing_consumables:
+                        st.markdown(f"• {item}")
+                else:
+                    st.info("Eksik sarf malzemesi bulunmuyor.")
+                
+                # Eksik genel giderler
+                missing_overhead = analysis.get("missing_items", {}).get("overhead", [])
+                if missing_overhead:
+                    st.markdown("**❌ Eksik Genel Giderler:**")
+                    for item in missing_overhead:
+                        st.markdown(f"• {item}")
+                else:
+                    st.info("Eksik genel gider bulunmuyor.")
+                
+                # Eksik indirect giderler
+                missing_indirect = analysis.get("missing_items", {}).get("indirect", [])
+                if missing_indirect:
+                    st.markdown("**❌ Eksik Indirect Giderler:**")
+                    for item in missing_indirect:
+                        st.markdown(f"• {item}")
+                else:
+                    st.info("Eksik indirect gider bulunmuyor.")
+            
+            with tab_workers:
+                st.markdown("#### İşçi Dağılımı Analizi")
+                
+                worker_dist = analysis.get("worker_distribution", {})
+                if worker_dist:
+                    col_w1, col_w2, col_w3 = st.columns(3)
+                    
+                    with col_w1:
+                        demirci_ratio = worker_dist.get("demirci_ratio", 0)
+                        st.metric("Demirci Oranı", f"{demirci_ratio:.1f}%")
+                    
+                    with col_w2:
+                        kalipci_ratio = worker_dist.get("kalipci_ratio", 0)
+                        st.metric("Kalıpçı Oranı", f"{kalipci_ratio:.1f}%")
+                    
+                    with col_w3:
+                        duz_isci_ratio = worker_dist.get("duz_isci_ratio", 0)
+                        st.metric("Düz İşçi Oranı", f"{duz_isci_ratio:.1f}%")
+                    
+                    # İşçi dağılımı analizi
+                    analysis_text = worker_dist.get("analysis", "Analiz bulunmuyor.")
+                    st.info(analysis_text)
+                else:
+                    st.info("İşçi dağılımı analizi bulunmuyor.")
+            
+            with tab_moscow:
+                st.markdown("#### Moskova Özel Analiz")
+                
+                moscow_spec = analysis.get("moscow_specific", {})
+                if moscow_spec:
+                    st.markdown(f"**❄️ Kış Etkisi:** {moscow_spec.get('winter_impact', 'Belirtilmemiş')}")
+                    st.markdown(f"**⚡ Verimlilik Faktörleri:** {moscow_spec.get('efficiency_factors', 'Belirtilmemiş')}")
+                    st.markdown(f"**🛡️ Güvenlik Gereksinimleri:** {moscow_spec.get('safety_requirements', 'Belirtilmemiş')}")
+                    st.markdown(f"**💰 Ek Maliyetler:** {moscow_spec.get('additional_costs', 'Belirtilmemiş')}")
+                else:
+                    st.info("Moskova özel analizi bulunmuyor.")
+            
+            with tab_indirect:
+                st.markdown("#### Indirect Giderler Analizi")
+                
+                indirect_analysis = analysis.get("indirect_analysis", {})
+                if indirect_analysis:
+                    col_ind1, col_ind2, col_ind3 = st.columns(3)
+                    
+                    with col_ind1:
+                        total_indirect = indirect_analysis.get("total_indirect_rate", 0)
+                        st.metric("Toplam Indirect", f"{total_indirect:.1f}%")
+                    
+                    with col_ind2:
+                        cost_ratio = indirect_analysis.get("total_cost_ratio", 0)
+                        st.metric("Maliyet Oranı", f"{cost_ratio:.1f}%")
+                    
+                    with col_ind3:
+                        assessment = indirect_analysis.get("assessment", "makul")
+                        st.metric("Değerlendirme", assessment)
+                    
+                    # Detaylı indirect analizi
+                    detailed_analysis = indirect_analysis.get("detailed_analysis", "Analiz bulunmuyor.")
+                    st.info(detailed_analysis)
+                else:
+                    st.info("Indirect analizi bulunmuyor.")
+            
+            with tab_raw:
+                st.json(analysis)
+        
+        # Uygulama butonları
+        col_apply1, col_apply2, col_apply3 = st.columns([1,1,1])
+        
+        with col_apply1:
+            if st.button("✅ Önerileri Uygula", type="primary"):
+                st.session_state["consumables_rate"] = float(analysis.get("consumables_pct", payload["consumables_pct"]))
+                st.session_state["overhead_rate"] = float(analysis.get("overhead_pct", payload["overhead_pct"]))
+                st.session_state["hours_per_day"] = float(analysis.get("hours_per_day", payload["hours_per_day"]))
+                st.session_state["scenario"] = str(analysis.get("scenario", payload["scenario"]))
+                st.success("✅ Moskova önerileri başarıyla uygulandı!")
+                st.rerun()
+        
+        with col_apply2:
+            if st.button("📊 Eksik Giderleri Ekle"):
+                st.info("Eksik giderleri otomatik ekleme özelliği geliştiriliyor...")
+        
+        with col_apply3:
+            if st.button("🗑️ Analizi Temizle"):
+                st.session_state.pop("gpt_analysis", None)
+                st.success("Analiz temizlendi.")
+                st.rerun()
 
     # ---------- RAG ----------
     bih("📚 RAG: Dosya yükle → indeksle → ara","📚 RAG: загрузить → проиндексировать → искать", level=3)
