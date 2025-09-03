@@ -4572,8 +4572,12 @@ with tab_sonuclar:
         """, unsafe_allow_html=True)
         
         # Oranların dağılımı hesaplama
-        sarf_share = (data['consumables_rate_eff'] * 100) / total_rate * 100
-        overhead_share = (data['overhead_rate_eff'] * 100) / total_rate * 100
+        if total_rate > 0:
+            sarf_share = (data['consumables_rate_eff'] * 100) / total_rate * 100
+            overhead_share = (data['overhead_rate_eff'] * 100) / total_rate * 100
+        else:
+            sarf_share = 0
+            overhead_share = 0
         
         # Toplam proje maliyetine göre gider dağılımı hesaplama
         total_project_cost = data['project_total_cost']
@@ -4584,9 +4588,14 @@ with tab_sonuclar:
         indirect_cost = data['indirect_rate_total'] * total_project_cost
         
         # Toplam maliyete göre yüzdeler
-        sarf_percent_of_total = (sarf_cost / total_project_cost) * 100
-        overhead_percent_of_total = (overhead_cost / total_project_cost) * 100
-        indirect_percent_of_total = (indirect_cost / total_project_cost) * 100
+        if total_project_cost > 0:
+            sarf_percent_of_total = (sarf_cost / total_project_cost) * 100
+            overhead_percent_of_total = (overhead_cost / total_project_cost) * 100
+            indirect_percent_of_total = (indirect_cost / total_project_cost) * 100
+        else:
+            sarf_percent_of_total = 0
+            overhead_percent_of_total = 0
+            indirect_percent_of_total = 0
         
         # Pasta grafikleri için veri hazırlama
         import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
@@ -4602,18 +4611,22 @@ with tab_sonuclar:
             pie_sizes = [data['consumables_rate_eff'] * 100, data['overhead_rate_eff'] * 100]
             pie_colors = ['#ff9999', '#66b3ff']
             
-            # Pasta grafik oluştur
-            fig, ax = plt.subplots(figsize=(8, 6))
-            wedges, texts, autotexts = ax.pie(pie_sizes, labels=pie_labels, colors=pie_colors, 
-                                            autopct='%1.1f%%', startangle=90)
-            ax.set_title('Sarf ve Overhead Dağılımı', fontsize=14, fontweight='bold')
-            
-            # Grafik stilini ayarla
-            plt.setp(autotexts, size=10, weight="bold")
-            plt.setp(texts, size=12)
-            
-            st.pyplot(fig)
-            plt.close()
+            # Sadece pozitif değerler varsa grafik göster
+            if sum(pie_sizes) > 0:
+                # Pasta grafik oluştur
+                fig, ax = plt.subplots(figsize=(8, 6))
+                wedges, texts, autotexts = ax.pie(pie_sizes, labels=pie_labels, colors=pie_colors, 
+                                                autopct='%1.1f%%', startangle=90)
+                ax.set_title('Sarf ve Overhead Dağılımı', fontsize=14, fontweight='bold')
+                
+                # Grafik stilini ayarla
+                plt.setp(autotexts, size=10, weight="bold")
+                plt.setp(texts, size=12)
+                
+                st.pyplot(fig)
+                plt.close()
+            else:
+                st.info("📊 Sarf ve Overhead değerleri sıfır olduğu için grafik gösterilemiyor.")
         
         with col_pie2:
             st.markdown("**🎯 Toplam Proje Maliyetine Göre Dağılım**")
@@ -4629,17 +4642,21 @@ with tab_sonuclar:
             total_pie_colors = ['#ff9999', '#66b3ff', '#99ff99', '#f0f0f0']
             
             # Pasta grafik oluştur
-            fig2, ax2 = plt.subplots(figsize=(8, 6))
-            wedges2, texts2, autotexts2 = ax2.pie(total_pie_sizes, labels=total_pie_labels, colors=total_pie_colors, 
-                                                autopct='%1.1f%%', startangle=90)
-            ax2.set_title('Toplam Proje Maliyetine Göre Dağılım', fontsize=14, fontweight='bold')
-            
-            # Grafik stilini ayarla
-            plt.setp(autotexts2, size=10, weight="bold")
-            plt.setp(texts2, size=12)
-            
-            st.pyplot(fig2)
-            plt.close()
+            # Sadece pozitif değerler varsa grafik göster
+            if sum(total_pie_sizes) > 0:
+                fig2, ax2 = plt.subplots(figsize=(8, 6))
+                wedges2, texts2, autotexts2 = ax2.pie(total_pie_sizes, labels=total_pie_labels, colors=total_pie_colors, 
+                                                    autopct='%1.1f%%', startangle=90)
+                ax2.set_title('Toplam Proje Maliyetine Göre Dağılım', fontsize=14, fontweight='bold')
+                
+                # Grafik stilini ayarla
+                plt.setp(autotexts2, size=10, weight="bold")
+                plt.setp(texts2, size=12)
+                
+                st.pyplot(fig2)
+                plt.close()
+            else:
+                st.info("📊 Toplam proje maliyeti sıfır olduğu için grafik gösterilemiyor.")
         
         # Sorumluluk Matrisi Etkisi Analizi
         st.markdown("---")
