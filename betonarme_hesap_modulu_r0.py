@@ -2,13 +2,287 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import os, io, json, math, uuid, hashlib, requests
-import numpy as np
-import streamlit as st
-import pandas as pd
+import os, io, json, math, uuid, hashlib, requests  # pyright: ignore[reportMissingModuleSource]
+import numpy as np  # pyright: ignore[reportMissingImports]
+import streamlit as st  # pyright: ignore[reportMissingImports]
+import pandas as pd  # pyright: ignore[reportMissingImports]
 from datetime import date, timedelta
-from pandas import ExcelWriter
-import matplotlib.pyplot as plt
+from pandas import ExcelWriter  # pyright: ignore[reportMissingImports]
+import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
+from rag_backend import init_backend, reset_backend, add_records, search, migrate_from_jsonl_if_needed, get_status
+
+# =============== AUTO-RAG SİSTEMİ ===============
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_rag_search(queries_hash: str, queries: List[str], k: int = 6, score_threshold: float = 0.25):
+    """RAG arama sonuçlarını önbellekle"""
+    try:
+        all_results = []
+        for query in queries:
+            qemb = embed_texts([query])
+            if qemb:
+                import numpy as np
+                qemb_np = np.array(qemb[0], dtype=np.float32)
+                results = search(qemb_np, topk=k)
+                all_results.extend(results)
+        
+        # Skor filtreleme ve çeşitlendirme
+        filtered_results = [r for r in all_results if r['score'] >= score_threshold]
+        
+        # Doküman çeşitlendirmesi (her belgeden max 2 parça)
+        doc_counts = {}
+        diverse_results = []
+        for result in filtered_results:
+            doc_id = result.get('meta', {}).get('filename', 'unknown')
+            if doc_counts.get(doc_id, 0) < 2:
+                diverse_results.append(result)
+                doc_counts[doc_id] = doc_counts.get(doc_id, 0) + 1
+        
+        # Basit re-ranking (tarih varsa boost)
+        for result in diverse_results:
+            meta = result.get('meta', {})
+            if 'date' in meta or 'timestamp' in meta:
+                result['score'] *= 1.05  # 5% boost
+        
+        return sorted(diverse_results, key=lambda x: x['score'], reverse=True)[:k*2]
+    except Exception as e:
+        st.error(f"RAG arama hatası: {e}")
+        return []
+
+def build_queries(state: dict) -> List[str]:
+    """Mevcut duruma göre otomatik sorgular üret"""
+    queries = set()
+    
+    # Proje bağlamı
+    queries.add("Moskova betonarme işçilik birim fiyat m3")
+    queries.add("Rusya şantiye maliyetleri betonarme")
+    
+    # Eleman bazlı sorgular
+    selected_elements = []
+    for element in ELEMENT_ORDER:
+        if state.get(f"use_{element}", False):
+            selected_elements.append(element)
+            queries.add(f"{LABELS[element]} m3 işçilik normu adam*saat")
+    
+    # Zorluk faktörleri
+    if state.get("use_winter_factor", False):
+        queries.add("kış şartı işçilik verimsizlik yüzdesi beton dökümü")
+        queries.add("soğuk hava beton işçilik norm artışı")
+    
+    if state.get("use_heavy_rebar", False):
+        queries.add("ağır donatı yoğunluğu norm artışı")
+        queries.add("yüksek donatı oranı işçilik zorluğu")
+    
+    if state.get("use_site_congestion", False):
+        queries.add("şantiye sıkışıklığı işçilik verimsizlik")
+        queries.add("kalabalık şantiye norm artışı")
+    
+    if state.get("use_pump_height", False):
+        queries.add("yüksek pompa beton işçilik zorluğu")
+        queries.add("pompa yüksekliği norm artışı")
+    
+    if state.get("use_form_repeat", False):
+        queries.add("kalıp tekrarı işçilik verimsizlik")
+        queries.add("tekrarlı kalıp işçilik normu")
+    
+    # Gider oranları
+    if state.get("overhead_rate", 0) > 0:
+        queries.add("şantiye genel idare gider yüzdesi betonarme")
+        queries.add("overhead oranı tipik değerler")
+    
+    if state.get("consumables_rate", 0) > 0:
+        queries.add("sarf malzemeleri oranı betonarme işçilik")
+        queries.add("consumables yüzdesi referans")
+    
+    if state.get("indirect_rate", 0) > 0:
+        queries.add("indirect giderler oranı şantiye")
+        queries.add("dolaylı maliyetler yüzdesi")
+    
+    # Adam-saat ve çalışma koşulları
+    if state.get("work_hours_per_day", 0) > 0:
+        queries.add("günlük çalışma saati tipik değerler")
+        queries.add("şantiye çalışma saatleri norm")
+    
+    if state.get("holiday_days", 0) > 0:
+        queries.add("tatil gün sayısı şantiye")
+        queries.add("iş günü hesaplama şantiye")
+    
+    # Yemek ve konaklama
+    queries.add("yemek konaklama tipik tutarlar ruble/ay")
+    queries.add("personel barınma yemek maliyeti")
+    queries.add("şantiye yemekhane konaklama ücreti")
+    
+    # PPE ve eğitim
+    queries.add("SİZ iş kıyafeti maliyeti")
+    queries.add("personel eğitim maliyeti şantiye")
+    
+    # Senaryo bazlı
+    scenario = state.get("scenario", "Gerçekçi")
+    queries.add(f"{scenario} senaryo işçilik norm çarpanı referans")
+    
+    return list(queries)[:10]  # Maksimum 10 sorgu
+
+def extract_suggestions(snippets: List[dict]) -> List[dict]:
+    """LLM ile yapılandırılmış öneriler çıkar"""
+    if not snippets:
+        return []
+    
+    # Snippets'leri birleştir
+    combined_text = "\n\n".join([f"Kaynak {i+1}: {s['text']}" for i, s in enumerate(snippets)])
+    
+    system_prompt = """Sen bir şantiye maliyet analisti olarak, verilen belgelerden sayısal değerleri çıkar ve öneriler üret.
+
+Çıktın SADECE JSON formatında olmalı. Başka hiçbir şey yazma.
+
+Hedef alanlar:
+- winter_factor_pct: Kış faktörü yüzdesi
+- heavy_rebar_pct: Ağır donatı faktörü yüzdesi  
+- site_congestion_pct: Şantiye sıkışıklığı yüzdesi
+- pump_height_pct: Pompa yüksekliği faktörü yüzdesi
+- form_repeat_pct: Kalıp tekrarı faktörü yüzdesi
+- overhead_pct: Genel giderler yüzdesi
+- food_rub_month: Aylık yemek maliyeti (RUB)
+- lodging_rub_month: Aylık konaklama maliyeti (RUB)
+- transport_rub_month: Aylık ulaşım maliyeti (RUB)
+- ppe_rub_month: Aylık SİZ maliyeti (RUB)
+- training_rub_month: Aylık eğitim maliyeti (RUB)
+- element_norms_m3: Eleman bazlı normlar (m3 başına adam*saat)
+
+Her öneri için:
+- field: Alan adı
+- value: Sayısal değer
+- unit: Birim (%, RUB, adam*saat/m3)
+- source: Kaynak bilgisi
+- confidence: Güven skoru (0-1)
+- rationale: Gerekçe
+
+Sadece güvenilir sayısal değerleri çıkar. Tahmin yapma."""
+    
+    try:
+        client = openai.OpenAI(api_key=st.secrets.get("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Belgelerden öneriler çıkar:\n\n{combined_text}"}
+            ]
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        
+        # JSON parse et
+        import json
+        suggestions = json.loads(result_text)
+        
+        # Sadece güvenilir önerileri filtrele
+        filtered_suggestions = []
+        for suggestion in suggestions:
+            if (isinstance(suggestion.get('value'), (int, float)) and 
+                suggestion.get('confidence', 0) >= 0.55):
+                filtered_suggestions.append(suggestion)
+        
+        return filtered_suggestions
+        
+    except Exception as e:
+        st.warning(f"Öneri çıkarma hatası: {e}")
+        return []
+
+def run_auto_rag():
+    """Auto-RAG sistemini çalıştır"""
+    if not st.session_state.get("auto_rag", True):
+        return
+    
+    try:
+        # Mevcut durumu al
+        current_state = {
+            "use_grobeton": st.session_state.get("use_grobeton", False),
+            "use_rostverk": st.session_state.get("use_rostverk", False),
+            "use_temel": st.session_state.get("use_temel", False),
+            "use_doseme": st.session_state.get("use_doseme", False),
+            "use_perde": st.session_state.get("use_perde", False),
+            "use_merdiven": st.session_state.get("use_merdiven", False),
+            "use_winter_factor": st.session_state.get("use_winter_factor", False),
+            "use_heavy_rebar": st.session_state.get("use_heavy_rebar", False),
+            "use_site_congestion": st.session_state.get("use_site_congestion", False),
+            "use_pump_height": st.session_state.get("use_pump_height", False),
+            "use_form_repeat": st.session_state.get("use_form_repeat", False),
+            "overhead_rate": st.session_state.get("overhead_rate", 0),
+            "consumables_rate": st.session_state.get("consumables_rate", 0),
+            "indirect_rate": st.session_state.get("indirect_rate", 0),
+            "work_hours_per_day": st.session_state.get("work_hours_per_day", 0),
+            "holiday_days": st.session_state.get("holiday_days", 0),
+            "scenario": st.session_state.get("scenario", "Gerçekçi")
+        }
+        
+        # Sorguları üret
+        queries = build_queries(current_state)
+        if not queries:
+            return
+        
+        # Sorgu hash'i oluştur
+        import hashlib
+        queries_hash = hashlib.md5(str(sorted(queries)).encode()).hexdigest()
+        
+        # RAG arama yap
+        snippets = cached_rag_search(queries_hash, queries)
+        if not snippets:
+            return
+        
+        # Önerileri çıkar
+        suggestions = extract_suggestions(snippets)
+        if suggestions:
+            st.session_state["auto_rag_suggestions"] = suggestions
+            st.session_state["auto_rag_snippets"] = snippets
+            
+    except Exception as e:
+        st.error(f"Auto-RAG hatası: {e}")
+
+def apply_suggestions(selected_suggestions: List[dict]):
+    """Seçilen önerileri uygula"""
+    if not selected_suggestions:
+        return
+    
+    change_log = st.session_state.get("change_log", [])
+    
+    for suggestion in selected_suggestions:
+        field = suggestion.get('field')
+        new_value = suggestion.get('value')
+        source = suggestion.get('source', 'Bilinmeyen')
+        
+        if not field or new_value is None:
+            continue
+        
+        # Alan eşleştirmesi
+        field_mapping = {
+            'winter_factor_pct': 'winter_factor',
+            'heavy_rebar_pct': 'heavy_rebar_factor',
+            'site_congestion_pct': 'site_congestion_factor',
+            'pump_height_pct': 'pump_height_factor',
+            'form_repeat_pct': 'form_repeat_factor',
+            'overhead_pct': 'overhead_rate',
+            'food_rub_month': 'food_cost_month',
+            'lodging_rub_month': 'lodging_cost_month',
+            'transport_rub_month': 'transport_cost_month',
+            'ppe_rub_month': 'ppe_cost_month',
+            'training_rub_month': 'training_cost_month'
+        }
+        
+        mapped_field = field_mapping.get(field)
+        if mapped_field and mapped_field in st.session_state:
+            old_value = st.session_state[mapped_field]
+            st.session_state[mapped_field] = new_value
+            
+            # Change log'a ekle
+            change_log.append({
+                'field': field,
+                'old_value': old_value,
+                'new_value': new_value,
+                'source': source,
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    st.session_state["change_log"] = change_log
+    st.success(f"✅ {len(selected_suggestions)} öneri uygulandı!")
 
 # =============== 0) SABİTLER ===============
 # NDFL: Net'ten brüt'e çevrimde kullanılıyor; işveren primleri "brüt"e uygulanır (brüt+NDFL DEĞİL)
@@ -168,7 +442,7 @@ AUTO_RATE_SOURCES = [
 
 # OpenAI mevcut mu?
 try:
-    from openai import OpenAI
+    from openai import OpenAI  # pyright: ignore[reportMissingImports]
     _OPENAI_AVAILABLE = True
 except Exception:
     _OPENAI_AVAILABLE = False
@@ -180,6 +454,21 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# =============== RAG BACKEND BAŞLATMA ===============
+# Uygulama başlangıcında RAG backend'ini başlat
+if 'rag_backend_initialized' not in st.session_state:
+    try:
+        init_backend()
+        migration_result = migrate_from_jsonl_if_needed()
+        st.session_state['rag_backend_initialized'] = True
+        
+        # Migrasyon sonucunu göster
+        if migration_result['migrated'] > 0:
+            st.success(f"✅ Eski verilerden {migration_result['migrated']} kayıt taşındı, {migration_result['skipped']} kayıt atlandı.")
+    except Exception as e:
+        st.error(f"❌ RAG backend başlatılırken hata: {str(e)}")
+        st.session_state['rag_backend_initialized'] = False
 
 # =============== 2) MODERN STİL ===============
 def inject_style():
@@ -1821,7 +2110,7 @@ def controller_chat(current_state: dict):
         prompt = f"STATE:\n{json.dumps(current_state,ensure_ascii=False)}\n\nRAG:\n{rag_snips or '(yok)'}\n"
         try:
             r = client.chat.completions.create(
-                model="gpt-4o-mini", temperature=0.2,
+                model="gpt-4o", temperature=0.2,
                 messages=st.session_state["ctrl_msgs"] + [{"role":"user","content":prompt}]
             )
             reply = r.choices[0].message.content or ""
@@ -2718,7 +3007,7 @@ with tab_genel:
         norms_map = get_effective_scenario_norms()
         scenarios = ["İdeal","Gerçekçi","Kötü"]
         elements_tr = ["Grobeton","Rostverk","Temel","Döşeme","Perde","Merdiven"]
-        import pandas as _pd
+        import pandas as _pd  # pyright: ignore[reportMissingImports]
         rows = []
         for sc in scenarios:
             base = norms_map.get(sc, SCENARIO_NORMS["Gerçekçi"]) if isinstance(norms_map.get(sc), dict) else SCENARIO_NORMS.get(sc, {})
@@ -2843,7 +3132,7 @@ with tab_genel:
                     )
                     on_key  = f"diff_on_{it['key']}"
                     pct_key = f"diff_pct_{it['key']}"
-                    st.checkbox("Aktif", key=on_key)
+                    st.checkbox("Aktif", key=on_key, on_change=run_auto_rag)
                     # Yüzde girişi
                     st.number_input(
                         "Etki %",
@@ -2853,6 +3142,7 @@ with tab_genel:
                         format="%.2f",
                         key=pct_key,
                         disabled=not st.session_state[on_key],
+                        on_change=run_auto_rag
                     )
                     # Bu kalemin çarpanı
                     local_mult = 1.0 + (st.session_state[pct_key] / 100.0 if st.session_state[on_key] else 0.0)
@@ -2913,9 +3203,10 @@ with tab_eleman:
     sel_flags={}
     for i,k in enumerate(CANON_KEYS):
         with cols[i%3]:
-            sel_flags[k]=st.checkbox(LABELS[k], value=st.session_state.get(f"sel_{k}", True), key=f"sel_{k}")
+            sel_flags[k]=st.checkbox(LABELS[k], value=st.session_state.get(f"sel_{k}", True), key=f"sel_{k}", on_change=run_auto_rag)
     selected_elements=[k for k,v in sel_flags.items() if v]
     if not selected_elements:
+        st.warning(bi("En az bir betonarme eleman seçin.", "Выберите хотя бы один элемент."))
         st.warning(bi("En az bir betonarme eleman seçin.", "Выберите хотя бы один элемент."))
 
     bih("📏 Metraj","📏 Объёмы", level=3)
@@ -3182,6 +3473,15 @@ with tab_gider:
     # Indirect oranını session state'e kaydet
     st.session_state["indirect_rate_total"] = ind_total / 100.0
     
+    # Auto-RAG tetikleme için gider oranları değişikliklerini izle
+    if (st.session_state.get("_prev_consumables_rate", None) != st.session_state.get("consumables_rate", 0) or
+        st.session_state.get("_prev_overhead_rate", None) != st.session_state.get("overhead_rate", 0) or
+        st.session_state.get("_prev_indirect_rate", None) != st.session_state.get("indirect_rate_total", 0)):
+        run_auto_rag()
+        st.session_state["_prev_consumables_rate"] = st.session_state.get("consumables_rate", 0)
+        st.session_state["_prev_overhead_rate"] = st.session_state.get("overhead_rate", 0)
+        st.session_state["_prev_indirect_rate"] = st.session_state.get("indirect_rate_total", 0)
+    
     # Grup toplamlarını göster: Sarf, Overhead, Indirect + Genel Toplam
     st.markdown("---")
     cols_sum = st.columns(3)
@@ -3317,109 +3617,109 @@ with tab_matris:
         return mapping.get(key, default_tr)
     resp_catalog = [
         # ---------- 1) General ----------
-        ("General","gen_staff_work","Staff for work implementation","Персонал для выполнения работ","overlap_only",0.0,"core_labor"),
-        ("General","gen_work_permit","Work permit for the staff","Разрешение на работу для персонала","overhead",0.0,None),
-        ("General","gen_visa_rf","Russian working visas for foreign employees","Визы РФ для иностранного персонала","overhead",0.0,None),
-        ("General","gen_migration_resp","Employees follow RF migration legislation (penalties/legal/deportation)","Соблюдение миграционного законодательства РФ…","overhead",0.0,None),
-        ("General","gen_social_payments","Social payments/taxes for Contractor's staff & subs","Социальные отчисления, налоги…","overlap_only",0.0,"core_labor"),
-        ("General","gen_staff_transport_domintl","Transportation costs of the staff (Domestic & International)","Транспортные расходы персонала (внутренние/междунар.)","indirect",0.0,None),
-        ("General","gen_staff_transport_local","Local transportation of the staff","Местная перевозка своего персонала","overlap_only",0.0,"global_extras"),
-        ("General","gen_accom_food","Accommodation & feeding of the staff","Проживание и питание своего персонала","overlap_only",0.0,"global_extras"),
-        ("General","gen_transport_mounting","Local transportation of mounting materials/equipment (Contractor)","Местная транспортировка монтажных материалов и оборудования подрядчика","indirect",0.0,None),
-        ("General","gen_transport_wh_to_site","Local transport from Customer warehouse to site","Местная транспортировка со склада Заказчика до площадки","indirect",0.0,None),
-        ("General","gen_risk_loss_customer_ware","Risk of loss of Customer's materials in warehouses","Риск утраты материалов заказчика на складах…","indirect",0.0,None),
-        ("General","gen_risk_loss_customer_to_finish","Risk of loss of Customer's materials delivered for mounting till finish","Риск утраты материалов заказчика, переданных подрядчику…","indirect",0.0,None),
-        ("General","gen_risk_own_materials_equipment","Risk of loss of Contractor's own materials & equipment incl. cables","Риск утраты собственных материалов и оборудования подрядчика…","indirect",0.0,None),
-        ("General","gen_required_licenses","Required licenses per work types (RF regulations)","Требуемые лицензии по видам работ…","overhead",0.0,None),
-        ("General","gen_insurance_equip_staff","Insurance of the Contractor's equipment and staff","Страхование оборудования и персонала подрядчика","indirect",0.0,None),
-        ("General","gen_workplace_facilities","Workplace Facilities: furniture, phone, internet, printer","Оснащение рабочих мест: мебель, телефон, интернет, принтер","indirect",0.0,None),
+        ("General","gen_staff_work","İşlerin yürütülmesi için personel","Персонал для выполнения работ","overlap_only",0.0,"core_labor"),
+        ("General","gen_work_permit","Personel için çalışma izni","Разрешение на работу для персонала","overhead",0.0,None),
+        ("General","gen_visa_rf","Yabancı çalışanlar için RF çalışma vizeleri","Визы РФ для иностранного персонала","overhead",0.0,None),
+        ("General","gen_migration_resp","RF göç mevzuatına uyum (ceza/hukuk/sınır dışı riskleri)","Соблюдение миграционного законодательства РФ…","overhead",0.0,None),
+        ("General","gen_social_payments","Personel ve alt yükleniciler için sosyal ödemeler/vergiler","Социальные отчисления, налоги…","overlap_only",0.0,"core_labor"),
+        ("General","gen_staff_transport_domintl","Personelin taşınması (yurtiçi/yurtdışı)","Транспортные расходы персонала (внутренние/междунар.)","indirect",0.0,None),
+        ("General","gen_staff_transport_local","Personelin yerel taşınması","Местная перевозка своего персонала","overlap_only",0.0,"global_extras"),
+        ("General","gen_accom_food","Personelin barınma ve yemek giderleri","Проживание и питание своего персонала","overlap_only",0.0,"global_extras"),
+        ("General","gen_transport_mounting","Montaj malzemeleri/ekipmanlarının yerel taşınması (yüklenici)","Местная транспортировка монтажных материалов и оборудования подрядчика","indirect",0.0,None),
+        ("General","gen_transport_wh_to_site","Müşteri deposundan şantiyeye yerel taşıma","Местная транспортировка со склада Заказчика до площадки","indirect",0.0,None),
+        ("General","gen_risk_loss_customer_ware","Müşteri malzemelerinin depolarda kayıp riski","Риск утраты материалов заказчика на складах…","indirect",0.0,None),
+        ("General","gen_risk_loss_customer_to_finish","Montaja verilen müşteri malzemelerinin bitime kadar kayıp riski","Риск утраты материалов заказчика, переданных подрядчику…","indirect",0.0,None),
+        ("General","gen_risk_own_materials_equipment","Yüklenicinin kendi malzeme/ekipmanının kayıp riski (kablolar dâhil)","Риск утраты собственных материалов и оборудования подрядчика…","indirect",0.0,None),
+        ("General","gen_required_licenses","İş türleri için gerekli lisanslar (RF düzenlemeleri)","Требуемые лицензии по видам работ…","overhead",0.0,None),
+        ("General","gen_insurance_equip_staff","Ekipman ve personel sigortası","Страхование оборудования и персонала подрядчика","indirect",0.0,None),
+        ("General","gen_workplace_facilities","Çalışma alanı donanımı: mobilya, telefon, internet, yazıcı","Оснащение рабочих мест: мебель, телефон, интернет, принтер","indirect",0.0,None),
 
         # ---------- 2) H&S ----------
-        ("H&S","hs_engineer_on_site","H&S engineer – permanent representative","Инженер ТБ – постоянный представитель подрядчика","overhead",0.0,None),
-        ("H&S","hs_action_plan","H&S action plan","Программа мероприятий по ОТ и ТБ","overhead",0.0,None),
-        ("H&S","hs_meetings","Participation in coordination meetings on H&S (on request)","Участие в координационных совещаниях по ОТ и ТБ…","overhead",0.0,None),
-        ("H&S","hs_initial_briefing","Initial briefing for Contractor's entire staff","Первичный инструктаж по ОТ и ТБ…","overhead",0.0,None),
-        ("H&S","hs_full_responsibility","Full responsibility for observance of H&S in Contractor areas","Полная ответственность за соблюдение правил ОТ и ТБ…","overhead",0.0,None),
-        ("H&S","hs_guarding_openings","Guarding and closing of openings (Contractor areas)","Защитные ограждения и закрытие проемов…","indirect",0.0,None),
-        ("H&S","hs_site_med_station","Site medical station (first aid; nurse day/night)","Медпункт на площадке – первая помощь…","indirect",0.0,None),
-        ("H&S","hs_medical_costs","Medical costs (medicine, hospital, etc.)","Медицинские расходы (лекарство, больница и т. д.)","indirect",0.0,None),
-        ("H&S","hs_first_aid_kits","Equipment for first aid (kits at working area)","Оборудование для первой помощи (аптечки)","indirect",0.0,None),
-        ("H&S","hs_ppe","PPE, clothing & shoes for Contractor employees","СИЗ, одежда и обувь для сотрудников Подрядчика","overlap_only",0.0,"global_extras"),
-        ("H&S","hs_firefighting_eq","Firefighting equipment (extinguisher/blanket/water)","Противопожарное оборудование…","indirect",0.0,None),
-        ("H&S","hs_safety_labeling","Safety labeling / warning signs","Оснащение участка предупреждающими табличками","indirect",0.0,None),
-        ("H&S","hs_wind_panels","Wind Panels","Защитный экран","indirect",0.0,None),
-        ("H&S","hs_protective_nets","Protective-trapping nets (ЗУС)","Защитно-улавливающие сетки (ЗУС)","indirect",0.0,None),
-        ("H&S","hs_worker_certs","All necessary certificates/attestations for workers","Все необходимые сертификаты/аттестации для рабочих","overhead",0.0,None),
-        ("H&S","hs_consumables","All consumables for H&S","Все необходимые расходные материалы для ОТ и ТБ","consumables",0.0,None),
-        ("H&S","hs_lifting_consumables","All consumables for lifting (incl. tower cranes)","Расходники для такелажных работ (в т.ч. башенные краны)","consumables",0.0,None),
-        ("H&S","hs_lifting_supervisors","Lifting supervisors for all lifting equipment","Стропальщики/риггеры/супервайзеры по подъёмным работам","indirect",0.0,None),
+        ("H&S","hs_engineer_on_site","İSG mühendisi – sahada daimi temsilci","Инженер ТБ – постоянный представитель подрядчика","overhead",0.0,None),
+        ("H&S","hs_action_plan","İSG eylem planı","Программа мероприятий по ОТ и ТБ","overhead",0.0,None),
+        ("H&S","hs_meetings","İSG koordinasyon toplantılarına katılım (talebe bağlı)","Участие в координационных совещаниях по ОТ и ТБ…","overhead",0.0,None),
+        ("H&S","hs_initial_briefing","Tüm personel için ilk İSG bilgilendirmesi","Первичный инструктаж по ОТ и ТБ…","overhead",0.0,None),
+        ("H&S","hs_full_responsibility","Yüklenici alanlarında İSG kurallarına tam sorumluluk","Полная ответственность за соблюдение правил ОТ и ТБ…","overhead",0.0,None),
+        ("H&S","hs_guarding_openings","Açıklıkların korunması ve kapatılması (yüklenici alanları)","Защитные ограждения и закрытие проемов…","indirect",0.0,None),
+        ("H&S","hs_site_med_station","Şantiye reviri (ilk yardım; hemşire gündüz/gece)","Медпункт на площадке – первая помощь…","indirect",0.0,None),
+        ("H&S","hs_medical_costs","Tıbbi giderler (ilaç, hastane vb.)","Медицинские расходы (лекарство, больница и т. д.)","indirect",0.0,None),
+        ("H&S","hs_first_aid_kits","İlk yardım ekipmanları (çalışma alanlarında setler)","Оборудование для первой помощи (аптечки)","indirect",0.0,None),
+        ("H&S","hs_ppe","SİZ, iş kıyafeti ve ayakkabı","СИЗ, одежда и обувь для сотрудников Подрядчика","overlap_only",0.0,"global_extras"),
+        ("H&S","hs_firefighting_eq","Yangınla mücadele ekipmanı (tüp/örtü/su)","Противопожарное оборудование…","indirect",0.0,None),
+        ("H&S","hs_safety_labeling","Güvenlik işaretlemeleri/uyarı levhaları","Оснащение участка предупреждающими табличками","indirect",0.0,None),
+        ("H&S","hs_wind_panels","Rüzgâr panelleri","Защитный экран","indirect",0.0,None),
+        ("H&S","hs_protective_nets","Koruyucu-yakalama ağları (ЗУС)","Защитно-улавливающие сетки (ЗУС)","indirect",0.0,None),
+        ("H&S","hs_worker_certs","Çalışanlar için gerekli sertifika/ehliyetler","Все необходимые сертификаты/аттестации для рабочих","overhead",0.0,None),
+        ("H&S","hs_consumables","İSG için tüm sarf malzemeleri","Все необходимые расходные материалы для ОТ и ТБ","consumables",0.0,None),
+        ("H&S","hs_lifting_consumables","Kaldırma işleri (bkz. kule vinçler) için sarf malzemeleri","Расходники для такелажных работ (в т.ч. башенные краны)","consumables",0.0,None),
+        ("H&S","hs_lifting_supervisors","Kaldırma ekipmanı için işaretçi/rigging sorumluları","Стропальщики/риггеры/супервайзеры по подъёмным работам","indirect",0.0,None),
 
         # ---------- 3) Site equipment ----------
-        ("Site","site_power_conn","Power connection points (per master plan)","Точки подключения электроэнергии согласно генплану","indirect",0.0,None),
-        ("Site","site_power_distribution","Distribution of power to Contractor's site","Распределение электроэнергии до зон Подрядчика","indirect",0.0,None),
-        ("Site","site_power_costs","Electricity costs","Расходы на электричество","indirect",0.0,None),
-        ("Site","site_water_conn","Process water connection points (per master plan)","Точки подключения тех. воды согласно генплану","indirect",0.0,None),
-        ("Site","site_water_distribution","Distribution of process water to Contractor's site","Распределение воды до зон Подрядчика","indirect",0.0,None),
-        ("Site","site_water_costs","Process water costs","Расходы на воду","indirect",0.0,None),
-        ("Site","site_generator","Generator if needed","Генератор при необходимости","indirect",0.0,None),
-        ("Site","site_main_lighting","Main lighting of areas/buildings (entire period)","Основное освещение площадок и зданий","indirect",0.0,None),
-        ("Site","site_add_lighting","Additional lighting (Contractor territories)","Дополнительное освещение территорий подрядчика","indirect",0.0,None),
-        ("Site","site_covered_storage","Covered storage for materials delivered for mounting","Крытые площадки складирования (выданных в монтаж)","indirect",0.0,None),
-        ("Site","site_closed_storage","Closed storage/warehouses for mounting materials","Закрытые площадки / склады (выданных в монтаж)","indirect",0.0,None),
-        ("Site","site_temp_roads","Temporary roads only for contractor use","Временные дороги только для подрядчика","indirect",0.0,None),
-        ("Site","site_add_fencing","Additional fencing of contractor territory (if needed)","Дополнительное ограждение территории подрядчика","indirect",0.0,None),
-        ("Site","site_scrap_place","Scrap metal storage place on site","Площадка хранения металлолома","indirect",0.0,None),
-        ("Site","site_lockers","Locker","Раздевалки","indirect",0.0,None),
-        ("Site","site_office","Office premises","Офисные помещения","indirect",0.0,None),
-        ("Site","site_toilets","Toilets for contractor","Туалеты субподрядчика","indirect",0.0,None),
-        ("Site","site_fire_access","Fire-fighting access, permanent access to site","Пожарные подъезды и постоянный доступ","indirect",0.0,None),
-        ("Site","site_gate_guard","Safeguarding at the front gate","Охрана на проходной","indirect",0.0,None),
-        ("Site","site_add_guard","Additional safeguarding (if needed)","Дополнительная охрана (по необходимости)","indirect",0.0,None),
-        ("Site","site_full_fencing","Fencing of the whole construction site","Ограждение всей стройплощадки","indirect",0.0,None),
+        ("Site","site_power_conn","Enerji bağlantı noktaları (genel plana göre)","Точки подключения электроэнергии согласно генплану","indirect",0.0,None),
+        ("Site","site_power_distribution","Yüklenici alanlarına enerji dağıtımı","Распределение электроэнергии до зон Подрядчика","indirect",0.0,None),
+        ("Site","site_power_costs","Elektrik giderleri","Расходы на электричество","indirect",0.0,None),
+        ("Site","site_water_conn","Prosess suyu bağlantı noktaları (genel plana göre)","Точки подключения тех. воды согласно генплану","indirect",0.0,None),
+        ("Site","site_water_distribution","Yüklenici alanlarına su dağıtımı","Распределение воды до зон Подрядчика","indirect",0.0,None),
+        ("Site","site_water_costs","Su giderleri","Расходы на воду","indirect",0.0,None),
+        ("Site","site_generator","Gerekirse jeneratör","Генератор при необходимости","indirect",0.0,None),
+        ("Site","site_main_lighting","Alan/bina ana aydınlatması (tüm dönem)","Основное освещение площадок и зданий","indirect",0.0,None),
+        ("Site","site_add_lighting","Ek aydınlatma (yüklenici alanları)","Дополнительное освещение территорий подрядчика","indirect",0.0,None),
+        ("Site","site_covered_storage","Montaja verilmiş malzemeler için kapalı stok alanı","Крытые площадки складирования (выданных в монтаж)","indirect",0.0,None),
+        ("Site","site_closed_storage","Montaj malzemeleri için kapalı depo/ambar","Закрытые площадки / склады (выданных в монтаж)","indirect",0.0,None),
+        ("Site","site_temp_roads","Yalnız yüklenici kullanımına geçici yollar","Временные дороги только для подрядчика","indirect",0.0,None),
+        ("Site","site_add_fencing","Yüklenici alanı için ek çit (gerekirse)","Дополнительное ограждение территории подрядчика","indirect",0.0,None),
+        ("Site","site_scrap_place","Şantiyede hurda metal depolama alanı","Площадка хранения металлолома","indirect",0.0,None),
+        ("Site","site_lockers","Soyunma odaları","Раздевалки","indirect",0.0,None),
+        ("Site","site_office","Ofis alanları","Офисные помещения","indirect",0.0,None),
+        ("Site","site_toilets","Yüklenici için tuvaletler","Туалеты субподрядчика","indirect",0.0,None),
+        ("Site","site_fire_access","Yangın müdahale yolları ve şantiyeye sürekli erişim","Пожарные подъезды и постоянный доступ","indirect",0.0,None),
+        ("Site","site_gate_guard","Giriş kapısında güvenlik","Охрана на проходной","indirect",0.0,None),
+        ("Site","site_add_guard","Ek güvenlik (gerekirse)","Дополнительная охрана (по необходимости)","indirect",0.0,None),
+        ("Site","site_full_fencing","Tüm şantiye alanının çevrilmesi","Ограждение всей стройплощадки","indirect",0.0,None),
 
         # ---------- 4) Works implementation ----------
-        ("Works","w_proj_docs","Project documentation in digital form","Проектные документы в электронном виде","overhead",0.0,None),
-        ("Works","w_mos","Preparing method of statement","Подготовка ППР","overhead",0.0,None),
-        ("Works","w_handover_docs","Preparing handover documents (as-built/protocols)","Подготовка акты и ИД","overhead",0.0,None),
-        ("Works","w_docs_archive","Documents from archive or electronic system","Документы из архива или из ЭДО","overhead",0.0,None),
-        ("Works","w_handover_site_coord","Handover site & coordinate network","Передача сетей стройплощадки и реперных точек","overhead",0.0,None),
-        ("Works","w_rep_present","Responsible contractor representative always on site","Назначенный представитель подрядчика постоянно на площадке","overhead",0.0,None),
-        ("Works","w_rep_coord_meet","Contractor representative in coordination meetings","Представитель подрядчика участвует в совещаниях","overhead",0.0,None),
-        ("Works","w_detailed_schedule","Detailed schedule of Contractor's work","Детальный график работ подрядчика","overhead",0.0,None),
-        ("Works","w_weekly_reports","Weekly reports on work completion (incl. resources)","Еженедельные отчеты по выполнению работ…","overhead",0.0,None),
-        ("Works","w_weekly_safety","Weekly safety reports","Еженедельные отчеты по ОТ и ТБ","overhead",0.0,None),
+        ("Works","w_proj_docs","Sayısal proje dokümanları","Проектные документы в электронном виде","overhead",0.0,None),
+        ("Works","w_mos","Yöntem bildirimi (PPR) hazırlanması","Подготовка ППР","overhead",0.0,None),
+        ("Works","w_handover_docs","Teslim dosyaları (as-built/protokoller) hazırlanması","Подготовка акты и ИД","overhead",0.0,None),
+        ("Works","w_docs_archive","Arşiv/Elektronik sistemden dokümanlar","Документы из архива или из ЭДО","overhead",0.0,None),
+        ("Works","w_handover_site_coord","Şantiye ağlarının ve koordinat sisteminin devri","Передача сетей стройплощадки и реперных точек","overhead",0.0,None),
+        ("Works","w_rep_present","Yüklenici temsilcisinin sahada sürekli bulunması","Назначенный представитель подрядчика постоянно на площадке","overhead",0.0,None),
+        ("Works","w_rep_coord_meet","Koordinasyon toplantılarına katılım (yüklenici temsilcisi)","Представитель подрядчика участвует в совещаниях","overhead",0.0,None),
+        ("Works","w_detailed_schedule","Yüklenici işlerinin ayrıntılı iş programı","Детальный график работ подрядчика","overhead",0.0,None),
+        ("Works","w_weekly_reports","Haftalık ilerleme raporları (kaynaklar dahil)","Еженедельные отчеты по выполнению работ…","overhead",0.0,None),
+        ("Works","w_weekly_safety","Haftalık İSG raporları","Еженедельные отчеты по ОТ и ТБ","overhead",0.0,None),
 
-        ("Works","w_concrete_proc","Concrete procurement","Закупка бетона","overlap_only",0.0,"materials"),
-        ("Works","w_rebar_proc","Reinforcement bars procurement","Закупка арматуры","overlap_only",0.0,"materials"),
-        ("Works","w_scaff_form","Scaffolding and formwork (all systems)","Леса и опалубки (все системы)","indirect",0.0,None),
-        ("Works","w_tower_cranes","Tower cranes with operators","Башенные краны с операторами","indirect",0.0,None),
-        ("Works","w_temp_lifts","Temporary construction lifts with operators","Временные грузопассажирские лифты с операторами","indirect",0.0,None),
-        ("Works","w_concrete_pumps","Concrete pumps with all needed pipes","Бетононасосы со всеми трубами","indirect",0.0,None),
-        ("Works","w_pump_operators","Concrete pump operators, pump line montage & maintenance","Операторы, монтаж и ТО насосных линий","indirect",0.0,None),
-        ("Works","w_hyd_dist","Hydraulic concrete distributors","Гидравлические бетонораспределители","indirect",0.0,None),
-        ("Works","w_hyd_dist_ops","Hydraulic concrete distributor operators","Операторы гидр. бетонораспределителей","indirect",0.0,None),
-        ("Works","w_aux_lifting","Movable & auxiliary lifting devices (trucks, cranes, manlifts)","Передвижные и вспом. грузоподъёмные механизмы","indirect",0.0,None),
-        ("Works","w_wheel_wash","Wheel wash with operators","Мойка колес с операторами","indirect",0.0,None),
-        ("Works","w_all_equipment","All kind of equipment for works implementation","Все инструменты, используемые для выполнения работ","indirect",0.0,None),
+        ("Works","w_concrete_proc","Beton tedariki","Закупка бетона","overlap_only",0.0,"materials"),
+        ("Works","w_rebar_proc","Donatı çeliği tedariki","Закупка арматуры","overlap_only",0.0,"materials"),
+        ("Works","w_scaff_form","İskele ve kalıp sistemleri (tümü)","Леса и опалубки (все системы)","indirect",0.0,None),
+        ("Works","w_tower_cranes","Kule vinçler (operatörlü)","Башенные краны с операторами","indirect",0.0,None),
+        ("Works","w_temp_lifts","Geçici şantiye asansörleri (operatörlü)","Временные грузопассажирские лифты с операторами","indirect",0.0,None),
+        ("Works","w_concrete_pumps","Beton pompaları (tüm borular ile)","Бетононасосы со всеми трубами","indirect",0.0,None),
+        ("Works","w_pump_operators","Pompa operatörleri, hat montajı ve bakımı","Операторы, монтаж и ТО насосных линий","indirect",0.0,None),
+        ("Works","w_hyd_dist","Hidrolik beton dağıtıcılar","Гидравлические бетонораспределители","indirect",0.0,None),
+        ("Works","w_hyd_dist_ops","Hidrolik dağıtıcı operatörleri","Операторы гидр. бетонораспределителей","indirect",0.0,None),
+        ("Works","w_aux_lifting","Hareketli & yardımcı kaldırma araçları (kamyon, vinç, manlift)","Передвижные и вспом. грузоподъёмные механизмы","indirect",0.0,None),
+        ("Works","w_wheel_wash","Tekerlek yıkama (operatörlü)","Мойка колес с операторами","indirect",0.0,None),
+        ("Works","w_all_equipment","İşlerin icrası için her tür ekipman","Все инструменты, используемые для выполнения работ","indirect",0.0,None),
 
-        ("Works","w_aux_heat_insul","All auxiliary hard heat-insulation materials in concrete","Все вспомогательные твердые теплоизоляционные материалы…","overlap_only",0.0,"materials"),
-        ("Works","w_consumables","Consumables for works (gas, discs, tie wires etc.)","Расходные материалы для выполнения работ","consumables",0.0,None),
-        ("Works","w_measurements","Measurements including documentation","Измерения, включая исполнительную документацию","indirect",0.0,None),
-        ("Works","w_radios","Suitable portable radios (walkie-talkie)","Подходящие портативные радиостанции (рации)","indirect",0.0,None),
-        ("Works","w_concrete_care","Concrete care incl. heating in winter","Уход за бетоном, включая подогрев зимой","indirect",0.0,None),
-        ("Works","w_lab_tests","All necessary laboratory tests","Все необходимые лабораторные испытания","indirect",0.0,None),
-        ("Works","w_cleaning","Cleaning contractor's territory incl. waste removal","Уборка территорий подрядчика, вывоз мусора","indirect",0.0,None),
-        ("Works","w_snow_fire_access","Snow/ice removal from main tracks & fire access roads","Уборка снега и льда с основных путей и пожарных подъездов","indirect",0.0,None),
-        ("Works","w_snow_local","Snow/ice removal from Contractor areas/storage/temp roads","Уборка снега и льда с зон подрядчика/складов/временных путей","indirect",0.0,None),
-        ("Works","w_stormwater_site","Discharge storm/rainwater from construction site","Слив ливневой воды с площадок","indirect",0.0,None),
-        ("Works","w_stormwater_contractor","Discharge storm/rainwater from Contractor areas","Слив ливневой воды с зон подрядчика","indirect",0.0,None),
-        ("Works","w_load_unload","Loading/unloading materials on site (vertical/horizontal)","Погрузка-разгрузка материалов на площадке","indirect",0.0,None),
-        ("Works","w_transport_inside","Transportation of materials within construction site","Транспортировка материалов по стройплощадке","indirect",0.0,None),
+        ("Works","w_aux_heat_insul","Betonda kullanılan yardımcı ısı yalıtım malzemeleri","Все вспомогательные твердые теплоизоляционные материалы…","overlap_only",0.0,"materials"),
+        ("Works","w_consumables","İmalat sarfları (gaz, disk, tel vb.)","Расходные материалы для выполнения работ","consumables",0.0,None),
+        ("Works","w_measurements","Ölçümler ve evrak (as-built dâhil)","Измерения, включая исполнительную документацию","indirect",0.0,None),
+        ("Works","w_radios","El telsizleri","Подходящие портативные радиостанции (рации)","indirect",0.0,None),
+        ("Works","w_concrete_care","Beton bakım işleri (kışın ısıtma dâhil)","Уход за бетоном, включая подогрев зимой","indirect",0.0,None),
+        ("Works","w_lab_tests","Gerekli tüm laboratuvar testleri","Все необходимые лабораторные испытания","indirect",0.0,None),
+        ("Works","w_cleaning","Yüklenici alanlarının temizliği, atıkların uzaklaştırılması","Уборка территорий подрядчика, вывоз мусора","indirect",0.0,None),
+        ("Works","w_snow_fire_access","Ana güzergâhlar ve yangın yollarından kar/buz temizliği","Уборка снега и льда с основных путей и пожарных подъездов","indirect",0.0,None),
+        ("Works","w_snow_local","Yüklenici alanları/depolar/geçici yollardan kar/buz temizliği","Уборка снега и льда с зон подрядчика/складов/временных путей","indirect",0.0,None),
+        ("Works","w_stormwater_site","Şantiye sahasından yağmur suyu drenajı","Слив ливневой воды с площадок","indirect",0.0,None),
+        ("Works","w_stormwater_contractor","Yüklenici alanlarından yağmur suyu drenajı","Слив ливневой воды с зон подрядчика","indirect",0.0,None),
+        ("Works","w_load_unload","Malzemelerin sahada yükleme/boşaltması (düşey/yatay)","Погрузка-разгрузка материалов на площадке","indirect",0.0,None),
+        ("Works","w_transport_inside","Saha içi malzeme taşımaları","Транспортировка материалов по стройплощадке","indirect",0.0,None),
 
-        ("Works","w_rebar_couplings","Threaded/crimp couplings + tools for rebar preparation","Резьбовые/обжимные муфты + инструмент для подготовки арматуры","overlap_only",0.0,"materials"),
-        ("Works","w_rebar_coupling_works","Preparation/connection works with couplings (rebar)","Подготовительные и соединительные работы арматуры с муфтами","overlap_only",0.0,"core_labor"),
-        ("Works","w_material_overspend","Financial responsibility of material overspending","Материальная ответственность за перерасход материала","overlap_only",0.0,"materials"),
-        ("Works","w_repair_for_handover","Repair works necessary to handover the work","Ремонтные работы, необходимые для сдачи","indirect",0.0,None),
+        ("Works","w_rebar_couplings","Dişli/sıkma muflar + hazırlık ekipmanı (donatı)","Резьбовые/обжимные муфты + инструмент для подготовки арматуры","overlap_only",0.0,"materials"),
+        ("Works","w_rebar_coupling_works","Muflu donatı hazırlık/bağlantı çalışmaları","Подготовительные и соединительные работы арматуры с муфтами","overlap_only",0.0,"core_labor"),
+        ("Works","w_material_overspend","Malzeme israfının mali sorumluluğu","Материальная ответственность за перерасход материала","overlap_only",0.0,"materials"),
+        ("Works","w_repair_for_handover","Teslim için gerekli onarım işleri","Ремонтные работы, необходимые для сдачи","indirect",0.0,None),
     ]
 
     if "resp_matrix_state" not in st.session_state:
@@ -3615,6 +3915,9 @@ with tab_sonuclar:
 
     # Hesaplama butonu
     if st.button(bi("🧮 HESAPLA","🧮 РАССЧИТАТЬ"), type="primary", use_container_width=True, key="hesapla_sonuclar", help="Hesaplamayı başlat"):
+        # Auto-RAG tetikleme (hesaplama sonrası)
+        run_auto_rag()
+        
         # Modern loading animasyonu
         ph = get_loading_placeholder()
         with ph.container():
@@ -4286,7 +4589,7 @@ with tab_sonuclar:
         indirect_percent_of_total = (indirect_cost / total_project_cost) * 100
         
         # Pasta grafikleri için veri hazırlama
-        import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
         
         # 1. Ana Maliyet Dağılımı Pasta Grafiği (Sarf + Overhead'in kendi arasındaki dağılımı)
         col_pie1, col_pie2 = st.columns(2)
@@ -5140,6 +5443,21 @@ with tab_asistan:
 
     # ---------- RAG ----------
     bih("📚 RAG: Dosya yükle → indeksle → ara","📚 RAG: загрузить → проиндексировать → искать", level=3)
+    
+    # RAG Durum Gösterimi
+    status = get_status()
+    col_status1, col_status2, col_status3 = st.columns(3)
+    with col_status1:
+        st.metric("📊 Toplam Kayıt", f"{status['count']:,}")
+    with col_status2:
+        st.metric("🔢 Boyut", f"{status['dimension'] or '-'}")
+    with col_status3:
+        st.metric("💾 İndeks Durumu", "✅ Aktif" if status['index_exists'] else "❌ Yok")
+    
+    # Performans uyarısı
+    if status['count'] > 20000:
+        st.warning("⚠️ **Performans Uyarısı:** Çok büyük indeks (>20k kayıt). Arama yavaşlayabilir.")
+    
     uploads = st.file_uploader(bi("Dosya yükle (.txt, .csv, .xlsx)","Загрузить файлы (.txt, .csv, .xlsx)"), type=["txt","csv","xlsx"], accept_multiple_files=True, key="rag_up")
     cR1, cR2, cR3 = st.columns(3)
     with cR1:
@@ -5147,35 +5465,215 @@ with tab_asistan:
             if not uploads:
                 st.warning(bi("Dosya seçin.","Выберите файл(ы)."))
             else:
-                chunks=[]
-                for up in uploads: chunks += file_to_chunks(up)
-                if not chunks:
-                    st.warning(bi("Parça yok.","Нет фрагментов."))
-                else:
-                    texts=[c["text"] for c in chunks]
-                    embs=embed_texts(texts)
-                    if not embs:
-                        st.error(bi("Embed alınamadı (OpenAI anahtarı gerekli).","Не удалось получить эмбеддинги (нужен ключ OpenAI)."))
+                # Progress bar başlat
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    # 1. Dosyaları parçalara ayır
+                    status_text.text("📄 Dosyalar parçalara ayrılıyor...")
+                    chunks = []
+                    for up in uploads: 
+                        chunks += file_to_chunks(up)
+                    progress_bar.progress(25)
+                    
+                    if not chunks:
+                        st.warning(bi("Parça yok.","Нет фрагментов."))
                     else:
-                        recs=[{"id":str(uuid.uuid4()),"text":t,"embedding":e,"meta":c.get("meta",{})} for t,e,c in zip(texts,embs,chunks)]
-                        save_rag_records(recs); st.success(bi(f"İndekslendi: {len(recs)}", f"Проиндексировано: {len(recs)}"))
+                        # 2. Metinleri ve meta verileri hazırla
+                        status_text.text("🔤 Metinler hazırlanıyor...")
+                        texts = [c["text"] for c in chunks]
+                        metas = [c.get("meta", {}) for c in chunks]
+                        progress_bar.progress(50)
+                        
+                        # 3. Embedding'leri al
+                        status_text.text("🧠 Embedding'ler oluşturuluyor...")
+                        embs = embed_texts(texts)
+                        progress_bar.progress(75)
+                        
+                        if not embs:
+                            st.error(bi("Embed alınamadı (OpenAI anahtarı gerekli).","Не удалось получить эмбеддинги (нужен ключ OpenAI)."))
+                        else:
+                            # 4. FAISS backend'e ekle
+                            status_text.text("💾 FAISS indeksine kaydediliyor...")
+                            import numpy as np
+                            embs_np = np.array(embs, dtype=np.float32)
+                            
+                            ids = add_records(texts, metas, embs_np)
+                            progress_bar.progress(100)
+                            status_text.text("✅ Tamamlandı!")
+                            
+                            st.success(f"✅ FAISS indeksine {len(ids)} kayıt eklendi.")
+                    
+                except Exception as e:
+                    st.error(f"❌ İndeksleme sırasında hata: {str(e)}")
+                finally:
+                    # Progress bar'ı temizle
+                    progress_bar.empty()
+                    status_text.empty()
     with cR2:
         if st.button(bi("🧹 RAG temizle","🧹 Очистить RAG")):
-            ensure_rag_dir()
             try:
-                if os.path.exists(RAG_FILE): os.remove(RAG_FILE)
-                open(RAG_FILE,"a").close()
-                st.success(bi("RAG temizlendi.","RAG очищен."))
+                reset_backend()
+                st.success(bi("✅ İndeks sıfırlandı.","✅ Индекс сброшен."))
             except Exception as e:
-                st.error(bi(f"Hata: {e}", f"Ошибка: {e}"))
+                st.error(bi(f"❌ Hata: {e}", f"❌ Ошибка: {e}"))
     with cR3:
         q = st.text_input(bi("🔎 RAG' de ara","🔎 Поиск в RAG"), value=st.session_state.get("rag_q",""))
+        
+        # Filtre inputları
+        col_filter1, col_filter2 = st.columns(2)
+        with col_filter1:
+            filename_filter = st.text_input("📁 Dosya adı (içerir)", placeholder="örn: proje")
+        with col_filter2:
+            project_filter = st.text_input("🏷️ Proje etiketi", placeholder="örn: XYZ")
+        
         if st.button(bi("Ara","Найти"), key="rag_search_btn"):
-            hits = rag_search(q.strip(), topk=6) if q.strip() else []
-            st.session_state["rag_hits"] = hits or []
-    for it in st.session_state.get("rag_hits", []):
-        st.caption(f"• {it.get('meta',{}).get('filename','?')} — {it.get('meta',{})}")
-        st.code(it.get("text","")[:700])
+            if q.strip():
+                try:
+                    # Query embedding'i al
+                    qemb = embed_texts([q.strip()])
+                    if not qemb:
+                        st.error("❌ Query embedding alınamadı.")
+                    else:
+                        import numpy as np
+                        qemb_np = np.array(qemb[0], dtype=np.float32)
+                        
+                        # Filtreleri hazırla
+                        filters = {}
+                        if filename_filter:
+                            filters["filename_contains"] = filename_filter
+                        if project_filter:
+                            filters["project"] = project_filter
+                        
+                        # FAISS ile ara
+                        hits = search(qemb_np, topk=6, filters=filters)
+                        st.session_state["rag_hits"] = hits
+                        st.session_state["rag_q"] = q.strip()
+                        
+                        if hits:
+                            st.success(f"✅ {len(hits)} sonuç bulundu.")
+                        else:
+                            st.info("ℹ️ Sonuç bulunamadı.")
+                except Exception as e:
+                    st.error(f"❌ Arama sırasında hata: {str(e)}")
+            else:
+                st.warning("⚠️ Arama terimi girin.")
+    # Arama sonuçlarını göster
+    if st.session_state.get("rag_hits"):
+        st.markdown("### 🔍 Arama Sonuçları")
+        for i, hit in enumerate(st.session_state["rag_hits"]):
+            with st.expander(f"📄 {hit.get('meta', {}).get('filename', 'Bilinmeyen')} (Skor: {hit['score']:.3f})"):
+                # Skor değerlendirmesi
+                score_badge = ""
+                if hit['score'] < 0.15:
+                    score_badge = "🔴 Düşük güven"
+                elif hit['score'] < 0.25:
+                    score_badge = "🟡 Orta güven"
+                else:
+                    score_badge = "🟢 Yüksek güven"
+                
+                st.markdown(f"**{score_badge}** | **Dosya:** {hit.get('meta', {}).get('filename', 'Bilinmeyen')} | **Proje:** {hit.get('meta', {}).get('project', 'Belirtilmemiş')}")
+                st.markdown("---")
+                st.text(hit.get("text", "")[:1000] + ("..." if len(hit.get("text", "")) > 1000 else ""))
+
+    # ---------- 🤖 AUTO-RAG SİSTEMİ ----------
+    bih("🤖 Auto-RAG Asistanı","🤖 Auto-RAG Ассистент", level=3)
+    
+    # Auto-RAG Toggle
+    auto_rag_enabled = st.toggle("🔄 Auto-RAG (önerileri otomatik getir)", value=st.session_state.get("auto_rag", True), key="auto_rag")
+    
+    if auto_rag_enabled:
+        # Auto-RAG çalıştır
+        run_auto_rag()
+        
+        # Öneri paneli göster
+        if "auto_rag_suggestions" in st.session_state and st.session_state["auto_rag_suggestions"]:
+            st.markdown("### 📎 Belgelerden Öneriler")
+            
+            selected_suggestions = []
+            
+            for suggestion in st.session_state["auto_rag_suggestions"]:
+                field = suggestion.get('field', 'Bilinmeyen')
+                value = suggestion.get('value', 0)
+                unit = suggestion.get('unit', '')
+                source = suggestion.get('source', 'Bilinmeyen')
+                confidence = suggestion.get('confidence', 0)
+                rationale = suggestion.get('rationale', '')
+                
+                # Öneri satırı
+                col_sugg1, col_sugg2, col_sugg3, col_sugg4 = st.columns([2, 1, 1, 1])
+                
+                with col_sugg1:
+                    st.markdown(f"**{field}** → **{value} {unit}**")
+                    st.caption(f"Kaynak: {source} | Güven: {confidence:.0%}")
+                
+                with col_sugg2:
+                    if st.checkbox("Uygula", key=f"apply_{field}_{value}"):
+                        selected_suggestions.append(suggestion)
+                
+                with col_sugg3:
+                    if st.button("📄 Kaynağı aç", key=f"source_{field}_{value}"):
+                        # Kaynak snippet'i göster
+                        snippets = st.session_state.get("auto_rag_snippets", [])
+                        if snippets:
+                            st.markdown("#### 📄 Kaynak Belge")
+                            for snippet in snippets[:3]:  # İlk 3 snippet
+                                st.markdown(f"**Dosya:** {snippet.get('meta', {}).get('filename', 'Bilinmeyen')}")
+                                st.markdown(f"**Skor:** {snippet.get('score', 0):.3f}")
+                                st.text(snippet.get('text', '')[:500] + "...")
+                                st.markdown("---")
+                
+                with col_sugg4:
+                    if confidence < 0.7:
+                        st.markdown("⚠️ Düşük güven")
+                    elif confidence < 0.85:
+                        st.markdown("🟡 Orta güven")
+                    else:
+                        st.markdown("🟢 Yüksek güven")
+                
+                # Gerekçe
+                if rationale:
+                    st.info(f"💡 **Gerekçe:** {rationale}")
+                
+                st.markdown("---")
+            
+            # Seçilenleri uygula butonu
+            if selected_suggestions:
+                if st.button("✅ Seçilenleri Uygula", type="primary"):
+                    apply_suggestions(selected_suggestions)
+                    st.rerun()
+        else:
+            # RAG durumu kontrolü
+            status = get_status()
+            if status['count'] == 0:
+                st.warning("⚠️ **Henüz RAG verisi yok.** Dosya yükleyip indeksleyin.")
+            else:
+                st.info("ℹ️ **Auto-RAG aktif.** Değişikliklerde otomatik öneriler gelecek.")
+        
+        # Auto-RAG Günlük
+        if "change_log" in st.session_state and st.session_state["change_log"]:
+            with st.expander("📋 Auto-RAG Günlük (Son 20 İşlem)"):
+                changes = st.session_state["change_log"][-20:]  # Son 20
+                
+                if changes:
+                    # Tablo formatında göster
+                    change_data = []
+                    for change in changes:
+                        change_data.append({
+                            "Tarih": change.get('timestamp', '')[:19],  # İlk 19 karakter
+                            "Alan": change.get('field', ''),
+                            "Eski Değer": change.get('old_value', ''),
+                            "Yeni Değer": change.get('new_value', ''),
+                            "Kaynak": change.get('source', '')
+                        })
+                    
+                    df_changes = pd.DataFrame(change_data)
+                    st.dataframe(df_changes, use_container_width=True)
+                else:
+                    st.info("Henüz değişiklik yok.")
+    else:
+        st.info("Auto-RAG kapalı. Öneriler için açın.")
 
     # ---------- 💬 GPT Dev Console (Kod Yöneticisi) ----------
     bih("💬 GPT Dev Console (Kod Yöneticisi)","💬 GPT Dev Console (управление кодом)", level=3)
@@ -5284,7 +5782,7 @@ with tab_asistan:
                     f"KULLANICI İSTEK:\n{user_cmd}"
                 )
                 r = client.chat.completions.create(
-                    model="gpt-4o-mini", temperature=0.2,
+                    model="gpt-4o", temperature=0.2,
                     messages=[{"role":"system","content":system},{"role":"user","content":user}]
                 )
                 raw = r.choices[0].message.content or "{}"
@@ -5721,5 +6219,3 @@ if not month_wd_df.empty:
     
     # month_wd_df'ye parabolik dağıtım ekle
     month_wd_df["Manpower (Численность)"] = headcounts_int_part3
-
-# Sonuçlar yeni sekmede gösterilecek
