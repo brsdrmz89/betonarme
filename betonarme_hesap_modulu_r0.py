@@ -4461,7 +4461,10 @@ with tab_sonuclar:
         clear_loading_placeholder()
         
         # Toplam oranlar hesaplama (Indirect hariç)
-        total_rate = (data['consumables_rate_eff'] + data['overhead_rate_eff']) * 100
+        # Güvenli hesaplama - None değerleri kontrol et
+        consumables_rate = data.get('consumables_rate_eff', 0) or 0
+        overhead_rate = data.get('overhead_rate_eff', 0) or 0
+        total_rate = (consumables_rate + overhead_rate) * 100
         total_cost = data['project_total_cost']
         
         # Sorumluluk matrisi verilerini kontrol et
@@ -4500,10 +4503,10 @@ with tab_sonuclar:
             st.markdown("""
             <div style="background: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
                 <h4 style="color: #495057; margin: 0; font-weight: 600;">📈 Toplam Oranlar</h4>
-                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{total_rate:.2f}%</p>
+                <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{total_rate_float:.2f}%</p>
                 <p style="color: #6c757d; font-size: 0.8rem; margin: 0;">Sarf + Overhead</p>
             </div>
-            """.format(total_rate=total_rate), unsafe_allow_html=True)
+            """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         
         with col_main3:
             indirect_rate = data['indirect_rate_total'] * 100
@@ -4601,18 +4604,18 @@ with tab_sonuclar:
         import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
         
         # 1. Ana Maliyet Dağılımı Pasta Grafiği (Sarf + Overhead'in kendi arasındaki dağılımı)
-        col_pie1, col_pie2 = st.columns(2)
-        
-        with col_pie1:
-            st.markdown("**🍰 Sarf ve Overhead Dağılımı (Kendi Aralarında)**")
+        # Sadece pozitif değerler varsa grafik bölümünü göster
+        if sum([data['consumables_rate_eff'] * 100, data['overhead_rate_eff'] * 100]) > 0:
+            col_pie1, col_pie2 = st.columns(2)
             
-            # Pasta grafik verileri - kendi aralarındaki dağılım
-            pie_labels = ['Sarf Malzemeleri', 'Genel Giderler']
-            pie_sizes = [data['consumables_rate_eff'] * 100, data['overhead_rate_eff'] * 100]
-            pie_colors = ['#ff9999', '#66b3ff']
-            
-            # Sadece pozitif değerler varsa grafik göster
-            if sum(pie_sizes) > 0:
+            with col_pie1:
+                st.markdown("**🍰 Sarf ve Overhead Dağılımı (Kendi Aralarında)**")
+                
+                # Pasta grafik verileri - kendi aralarındaki dağılım
+                pie_labels = ['Sarf Malzemeleri', 'Genel Giderler']
+                pie_sizes = [data['consumables_rate_eff'] * 100, data['overhead_rate_eff'] * 100]
+                pie_colors = ['#ff9999', '#66b3ff']
+                
                 # Pasta grafik oluştur
                 fig, ax = plt.subplots(figsize=(8, 6))
                 wedges, texts, autotexts = ax.pie(pie_sizes, labels=pie_labels, colors=pie_colors, 
@@ -4625,38 +4628,48 @@ with tab_sonuclar:
                 
                 st.pyplot(fig)
                 plt.close()
-            else:
-                st.info("📊 Sarf ve Overhead değerleri sıfır olduğu için grafik gösterilemiyor.")
-        
-        with col_pie2:
-            st.markdown("**🎯 Toplam Proje Maliyetine Göre Dağılım**")
             
-            # Toplam proje maliyetine göre dağılım
-            total_pie_labels = ['Sarf Malzemeleri', 'Genel Giderler', 'Indirect Giderler', 'Ana Maliyet']
-            total_pie_sizes = [
-                sarf_percent_of_total,
-                overhead_percent_of_total,
-                indirect_percent_of_total,
-                100 - (sarf_percent_of_total + overhead_percent_of_total + indirect_percent_of_total)
-            ]
-            total_pie_colors = ['#ff9999', '#66b3ff', '#99ff99', '#f0f0f0']
-            
-            # Pasta grafik oluştur
-            # Sadece pozitif değerler varsa grafik göster
-            if sum(total_pie_sizes) > 0:
-                fig2, ax2 = plt.subplots(figsize=(8, 6))
-                wedges2, texts2, autotexts2 = ax2.pie(total_pie_sizes, labels=total_pie_labels, colors=total_pie_colors, 
-                                                    autopct='%1.1f%%', startangle=90)
-                ax2.set_title('Toplam Proje Maliyetine Göre Dağılım', fontsize=14, fontweight='bold')
+            with col_pie2:
+                st.markdown("**🎯 Toplam Proje Maliyetine Göre Dağılım**")
                 
-                # Grafik stilini ayarla
-                plt.setp(autotexts2, size=10, weight="bold")
-                plt.setp(texts2, size=12)
+                # Toplam proje maliyetine göre dağılım
+                total_pie_labels = ['Sarf Malzemeleri', 'Genel Giderler', 'Indirect Giderler', 'Ana Maliyet']
+                total_pie_sizes = [
+                    sarf_percent_of_total,
+                    overhead_percent_of_total,
+                    indirect_percent_of_total,
+                    100 - (sarf_percent_of_total + overhead_percent_of_total + indirect_percent_of_total)
+                ]
+                total_pie_colors = ['#ff9999', '#66b3ff', '#99ff99', '#f0f0f0']
                 
-                st.pyplot(fig2)
-                plt.close()
-            else:
-                st.info("📊 Toplam proje maliyeti sıfır olduğu için grafik gösterilemiyor.")
+                # Sadece pozitif değerler varsa grafik göster
+                if sum(total_pie_sizes) > 0:
+                    # Pasta grafik oluştur
+                    fig2, ax2 = plt.subplots(figsize=(8, 6))
+                    wedges2, texts2, autotexts2 = ax2.pie(total_pie_sizes, labels=total_pie_labels, colors=total_pie_colors, 
+                                                        autopct='%1.1f%%', startangle=90)
+                    ax2.set_title('Toplam Proje Maliyetine Göre Dağılım', fontsize=14, fontweight='bold')
+                    
+                    # Grafik stilini ayarla
+                    plt.setp(autotexts2, size=10, weight="bold")
+                    plt.setp(texts2, size=12)
+                    
+                    st.pyplot(fig2)
+                    plt.close()
+                else:
+                    st.warning("🎯 **Toplam Proje Maliyeti Sıfır**")
+                    st.info("""
+                    **Neden grafik gösterilmiyor?**
+                    - Toplam proje maliyeti: 0 ₽
+                    - Sarf maliyeti: 0 ₽
+                    - Overhead maliyeti: 0 ₽
+                    - Indirect maliyeti: 0 ₽
+                    
+                    **Çözüm önerileri:**
+                    1. Proje maliyet verilerini kontrol edin
+                    2. Birim fiyatları güncelleyin
+                    3. Proje hacmini kontrol edin
+                    """)
         
         # Sorumluluk Matrisi Etkisi Analizi
         st.markdown("---")
@@ -4761,33 +4774,48 @@ with tab_sonuclar:
         """, unsafe_allow_html=True)
         
         # Profesyonel değerlendirme kriterleri
-        if total_rate < 20:
+        # total_rate'ın geçerli bir sayı olduğundan emin ol
+        try:
+            total_rate_float = float(total_rate)
+        except (ValueError, TypeError):
+            total_rate_float = 0.0
+        
+        if total_rate_float == 0:
+            st.error("""
+            <div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+                <h5 style="color: #721c24; margin: 0 0 0.5rem 0;">🚨 SIFIR ORANLAR - Veri Eksikliği</h5>
+                <p style="color: #721c24; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
+                <p style="color: #721c24; margin: 0.2rem 0;"><strong>Durum:</strong> Sarf ve Overhead oranları sıfır</p>
+                <p style="color: #721c24; margin: 0.2rem 0;"><strong>Çözüm:</strong> Lütfen proje verilerini kontrol edin ve oranları güncelleyin</p>
+            </div>
+            """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
+        elif total_rate_float < 20:
             st.success("""
             <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
                 <h5 style="color: #155724; margin: 0 0 0.5rem 0;">✅ DÜŞÜK ORANLAR - Maliyet Açısından Avantajlı</h5>
-                <p style="color: #155724; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate:.2f}%</p>
+                <p style="color: #155724; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
                 <p style="color: #155724; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarına göre düşük maliyet</p>
                 <p style="color: #155724; margin: 0.2rem 0;"><strong>Öneri:</strong> Bu oranları koruyarak rekabet avantajı sağlayabilirsiniz</p>
             </div>
-            """.format(total_rate=total_rate), unsafe_allow_html=True)
-        elif total_rate < 30:
+            """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
+        elif total_rate_float < 30:
             st.markdown("""
             <div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
                 <h5 style="color: #0c5460; margin: 0 0 0.5rem 0;">ℹ️ MAKUL ORANLAR - Normal Şantiye Koşulları</h5>
-                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate:.2f}%</p>
+                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
                 <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye gerçeklerine uygun standart oranlar</p>
                 <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Öneri:</strong> Mevcut durumu koruyarak proje yönetimini sürdürün</p>
             </div>
-            """.format(total_rate=total_rate), unsafe_allow_html=True)
+            """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         else:
             st.markdown("""
             <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
                 <h5 style="color: #856404; margin: 0 0 0.5rem 0;">⚠️ YÜKSEK ORANLAR - Maliyet Kontrolü Gerekli</h5>
-                <p style="color: #856404; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate:.2f}%</p>
+                <p style="color: #856404; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
                 <p style="color: #856404; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarının üzerinde maliyet</p>
                 <p style="color: #856404; margin: 0.2rem 0;"><strong>Öneri:</strong> Sorumluluk matrisini gözden geçirerek maliyet optimizasyonu yapın</p>
             </div>
-            """.format(total_rate=total_rate), unsafe_allow_html=True)
+            """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         
         # Indirect giderler değerlendirmesi
         indirect_assessment = ""
