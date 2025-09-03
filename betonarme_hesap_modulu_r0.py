@@ -488,7 +488,6 @@ def inject_style():
         .fade-in-up {
             animation: fadeInUp 0.6s ease-out;
         }
-        
         /* Responsive tasarım */
         @media (max-width: 768px) {
             .main-header h1 {
@@ -986,7 +985,6 @@ def inject_style():
             color: #2c5282 !important;
             text-align: right !important;
         }
-        
         /* Streamlit'in kendi CSS'ini tamamen override et - Tüm olası selector'lar */
         div[data-testid="stDataFrame"] table td,
         div[data-testid="stDataFrame"] table th,
@@ -1442,7 +1440,7 @@ def monthly_role_cost_multinational(row: pd.Series, prim_sng: bool, prim_tur: bo
 
     # SNG (patent; tüm sigorta sistemleri + patent; resmi brüt asgariyi sağlar)
     if use_progressive_ndfl:
-        # 2025 kademeli NDFL’i yıllık bazda uygula (patent avansı mahsup edilmez — sade model)
+        # 2025 kademeli NDFL'i yıllık bazda uygula (patent avansı mahsup edilmez — sade model)
         gross_sng_full = gross_from_net_progressive_resident(net*12.0) / 12.0
     else:
         gross_sng_full = gross_from_net(net, ndfl_sng)
@@ -1910,7 +1908,7 @@ with tab_mantik:
         """
     )
     st.latex(r"\text{Cost}_{SNG} = G_{off}\,(1+OPS+OSS+OMS+HS) + P + extras + E + C")
-    st.markdown("Burada HS = НСиПЗ. Not: P (patent) NDFL’den mahsup edilmez — sabit gider olarak eklenir.")
+    st.markdown("Burada HS = НСиПЗ. Not: P (patent) NDFL'den mahsup edilmez — sabit gider olarak eklenir.")
 
     # 4) VKS (TR) maliyeti
     bih("4) VKS (TR) — İşveren Maliyeti","4) ВКС (Турция) — затраты работодателя", level=4)
@@ -1930,7 +1928,7 @@ with tab_mantik:
     bih("5) Ülke Karması (Rol bazında)","5) Смешение стран (по роли)", level=4)
     st.markdown(
         """
-        Her rol satırı için ülke payları yüzdesel olarak verilir ve 1’e normalize edilir.
+        Her rol satırı için ülke payları yüzdesel olarak verilir ve 1'e normalize edilir.
         """
     )
     st.latex(r"\text{Cost}_{per\,person} = p_{RUS}\,Cost_{RUS} + p_{SNG}\,Cost_{SNG} + p_{TUR}\,Cost_{VKS}")
@@ -1939,8 +1937,8 @@ with tab_mantik:
     bih("6) Normlar, Senaryo ve Zorluk","6) Нормы, сценарий и сложность", level=4)
     st.markdown(
         """
-        - Temel norm (senaryo = Gerçekçi) eleman “Temel” için n_ref alınır.
-        - Seçilen senaryonun “Temel” değeri ile oranlanarak senaryo çarpanı s hesaplanır.
+        - Temel norm (senaryo = Gerçekçi) eleman "Temel" için n_ref alınır.
+        - Seçilen senaryonun "Temel" değeri ile oranlanarak senaryo çarpanı s hesaplanır.
         - Eleman göreli katsayıları k_e normalize edilerek ortalaması 1 yapılır.
         - Zorluk çarpanı z, girilen faktörlerden çarpımla oluşur: z = ∏(1+f_i).
         - Eleman normu: n_e = n_ref × s × k_e × z.
@@ -1978,7 +1976,7 @@ with tab_mantik:
         - Çekirdek + Genel: core_genel_e = core_price_e × (1 + genel_oran)
         - Sarf toplamı: S = (Σ_e core_genel_e × m_e) × consumables_oran
         - Indirect toplamı: I = (Σ_e core_genel_e × m_e + S) × indirect_oran
-        - Eleman e’ye dağıtım ağırlığı: w_e = (core_genel_e × m_e) / Σ_e (core_genel_e × m_e)
+        - Eleman e'ye dağıtım ağırlığı: w_e = (core_genel_e × m_e) / Σ_e (core_genel_e × m_e)
         - Eleman e toplam (₽/m³): total_e = core_price_e + genel_e + sarf_e + indirect_e
         """
     )
@@ -1993,10 +1991,10 @@ with tab_mantik:
     st.markdown(
         """
         - Artan NDFL tersine çevirme hem SNG hem VKS için aynı yöntemle yapılır.
-        - SNG’de patent, vergiden mahsup edilmez; bilinçli basitleştirme. İleride istenirse anahtarla açılabilir.
-        - VKS’de yalnız НСиПЗ uygulanır; SNG’de tüm sosyal primler resmi brüte uygulanır.
+        - SNG'de patent, vergiden mahsup edilmez; bilinçli basitleştirme. İleride istenirse anahtarla açılabilir.
+        - VKS'de yalnız НСиПЗ uygulanır; SNG'de tüm sosyal primler resmi brüte uygulanır.
         - Ülke karması yüzdeleri her satırda normalize edilir (toplam 1 olur).
-        - Genel gider üst sınırı uygulanır; UI’da da aynı sınır uyarılır.
+        - Genel gider üst sınırı uygulanır; UI'da da aynı sınır uyarılır.
         """
     )
 
@@ -2009,8 +2007,8 @@ with tab_mantik:
         - Aylık resmi brütü (G) bulunca işverenin ödeyeceği sigorta primlerini hesaplıyoruz.
             - SNG için: emeklilik (OPS), sosyal (OSS), sağlık (OMS) ve iş kazası (НСиПЗ) resmi brüt üzerinden.
             - VKS (Türk) için: sadece iş kazası (НСиПЗ).
-        - SNG’de resmi brüt için bir **tavan** var. Brüt bu tavanı aşarsa, aşan kısım **elden** sayılır. Eldene vergi/prim eklemiyoruz; sadece nakit maliyeti ve varsa küçük bir komisyon (kasa/kur/çekim riskleri) ekleniyor.
-        - SNG’de her çalışan için aylık **patent** sabit bedeli var. Bu bedeli ayrıca ekliyoruz (vergiden düşmüyoruz; sizin isteğinizle sade model).
+        - SNG'de resmi brüt için bir **tavan** var. Brüt bu tavanı aşarsa, aşan kısım **elden** sayılır. Eldene vergi/prim eklemiyoruz; sadece nakit maliyeti ve varsa küçük bir komisyon (kasa/kur/çekim riskleri) ekleniyor.
+        - SNG'de her çalışan için aylık **patent** sabit bedeli var. Bu bedeli ayrıca ekliyoruz (vergiden düşmüyoruz; sizin isteğinizle sade model).
         - Kişi başına bu maliyeti bulduktan sonra, seçili elemanlar için kaç **adam-saat** gerektiğini hesaplıyoruz (metraj × norm). Bir kişinin ayda kaç saat çalışabileceğini varsayarak toplam **kişi-ay** ihtiyacını buluyoruz.
         - Kişi saat maliyetini normlarla çarparak m³ başına çekirdek maliyeti buluyoruz. Sonra üzerine **genel gider**, **sarf** ve **indirect** oranlarını ekleyip toplam m³ maliyetini elde ediyoruz.
         """
@@ -2094,152 +2092,6 @@ with tab_mantik:
                 st.download_button("İndir", data=buf.getvalue(), file_name="hesap_mantigi_ozet.txt", mime="text/plain")
             except Exception as e:
                 st.warning(f"PDF yerine metin çıktı üretildi: {e}")
-
-# ==================== 0) SABİTLER ====================
-with tab_sabitler:
-    # Yardımcı fonksiyonlar
-    def pct_to_ratio(x): return float(x)/100.0
-    def ratio_to_pct(x): return float(x)*100.0
-    
-    # Override sistemi
-    OVR = st.session_state.setdefault("CONST_OVERRIDES", {})
-    def eff(name, default): return OVR.get(name, default)
-    
-    # Global sabitler (default değerler) — yukarıda tanımlananları yeniden tanımlamıyoruz
-    # CASH_COMMISSION_RATE varsayılanı üstte tanımlıdır; burada yeniden tanımlamıyoruz
-    
-    # Kompakt kart ızgarası CSS
-    st.markdown("""
-    <style>
-    .const-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        gap: 12px;
-        margin: 1rem 0;
-    }
-    .const-card {
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 12px;
-        background: #fff;
-        transition: all 0.2s ease;
-    }
-    .const-card:hover {
-        border-color: #007bff;
-        box-shadow: 0 2px 8px rgba(0, 123, 255, 0.1);
-    }
-    .const-chip {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: #f1f5f9;
-        font-size: 12px;
-        margin-left: 6px;
-        color: #374151;
-        font-weight: 500;
-    }
-    .const-header {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        padding: 0.8rem 1rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        border: 1px solid #dee2e6;
-    }
-    .const-title {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 0.5rem;
-    }
-    .const-subtitle {
-        font-size: 0.8rem;
-        color: #6c757d;
-        font-style: italic;
-    }
-    .card-title {
-        font-size: 0.9rem;
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 0.3rem;
-    }
-    .card-desc {
-        font-size: 0.75rem;
-        color: #6c757d;
-        margin-bottom: 0.5rem;
-    }
-    .card-value {
-        font-size: 0.85rem;
-        font-weight: 700;
-        color: #333;
-        background: #f8f9fa;
-        padding: 0.4rem 0.6rem;
-        border-radius: 6px;
-        border: 1px solid #dee2e6;
-        text-align: center;
-        margin: 0.5rem 0;
-    }
-    .edit-area {
-        background: #f8f9fa;
-        border: 1px solid #007bff;
-        border-radius: 6px;
-        padding: 0.6rem;
-        margin-top: 0.5rem;
-    }
-    .button-row {
-        display: flex;
-        gap: 0.5rem;
-        margin-top: 0.5rem;
-    }
-    .override-badge {
-        display: inline-block;
-        padding: 0.2rem 0.6rem;
-        border-radius: 12px;
-        background: #e7f3ff;
-        color: #0056b3;
-        font-size: 0.7rem;
-        margin: 0.2rem;
-        border: 1px solid #b3d9ff;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Üst özet şeridi
-    st.markdown('<div class="const-header">', unsafe_allow_html=True)
-    st.markdown('<div class="const-title">⚙️ Sistem Sabitleri / ⚙️ Системные константы</div>', unsafe_allow_html=True)
-    st.markdown('<div class="const-subtitle">Bu gruptaki değişiklikler yalnızca bu oturum için geçerlidir. / Изменения в этой группе действуют только в текущей сессии.</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Override badge'leri
-    if OVR:
-        st.markdown("**Uygulanan Override'lar:**")
-        for k, v in OVR.items():
-            if isinstance(v, float):
-                if v < 1.0:  # Oran
-                    display_val = f"{ratio_to_pct(v):.2f}%"
-                else:  # Ruble
-                    display_val = f"{v:,.0f} ₽"
-            else:
-                display_val = str(v)
-            st.markdown(f'<span class="override-badge">{k}: {display_val}</span>', unsafe_allow_html=True)
-        
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            if st.button("Tümü Sıfırla", type="secondary"):
-                st.session_state["CONST_OVERRIDES"] = {}
-                st.rerun()
-        with col2:
-            st.caption("💡 Override'ları sıfırlamak için butona tıklayın.")
-    else:
-        st.info("ℹ️ Henüz hiçbir override uygulanmamış. Varsayılan değerler kullanılıyor.")
-    
-    st.markdown("<hr>", unsafe_allow_html=True)
-    
-    # Vergi modu seçimi (artan / sabit oran)
-    st.markdown(bi("#### Vergi Modu","Режим налогообложения"))
-    st.session_state["use_progressive_ndfl"] = st.toggle(
-        "Artan NDFL (2025 kademeleri) kullan", value=st.session_state.get("use_progressive_ndfl", True)
-    )
-    
     # RUSYA GRUBU
     with st.expander("Rusya Vatandaşları (RU) / Граждане РФ", expanded=False):
         st.markdown('<div class="const-grid">', unsafe_allow_html=True)
@@ -2549,75 +2401,6 @@ with tab_sabitler:
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
-# ==================== 1) GENEL ====================
-with tab_genel:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state["prim_sng"] = st.checkbox(
-            bi("SNG için gayriresmî/elden uygula (komisyonlu)", "Для СНГ применять неофициальную/наличную часть (с комиссией)"), value=st.session_state.get("prim_sng", True)
-        )
-    with col2:
-        st.session_state["prim_tur"] = st.checkbox(
-            bi("Türk (VKS) için gayriresmî/elden uygula (komisyonlu)", "Для ВКС (Турция) применять неофициальную/наличную часть (с комиссией)"), value=st.session_state.get("prim_tur", True)
-        )
-    st.caption(bi("ℹ️ ‘Gayriresmî/Elden’ (nakit) **hiçbir vergi/prim içermez**; yalnızca komisyon uygulanır. Resmî brüt kısma OPS/OSS/OMS + НСиПЗ (VKS'de yalnız НСиПЗ).",
-                 "ℹ️ ‘Неофициальная/наличная’ часть не облагается налогами/взносами; только комиссия. На официальный брутто начисляются ОПС/ОСС/ОМС + НСиПЗ (для ВКС только НСиПЗ)."))
-
-    # Uzaktan çalışma/НСиПЗ seçenekleri kaldırıldı (işçiler sahada çalışır varsayımı)
-
-    cA, cB = st.columns(2)
-    with cA:
-        st.session_state["start_date"] = st.date_input(
-            bi("Başlangıç", "Начало"), value=st.session_state.get("start_date", date.today().replace(day=1)), key="start_date_inp"
-        )
-    with cB:
-        st.session_state["end_date"] = st.date_input(
-            bi("Bitiş", "Окончание"), value=st.session_state.get("end_date", date.today().replace(day=30)), key="end_date_inp"
-        )
-    
-
-    
-
-
-    holiday_options=[(bi("Hiç tatil yok (7/7)","Без выходных (7/7)"),"tam_calisma"),
-                     (bi("Her Pazar tatil (6/7)","Выходной только вс (6/7)"),"her_pazar"),
-                     (bi("Her Cmt+Paz tatil (5/7)","Выходные сб+вс (5/7)"),"hafta_sonu_tatil"),
-                     (bi("2 haftada 1 Pazar tatil","Каждые 2 недели выходной вс"),"iki_haftada_bir_pazar")]
-    sel = st.selectbox(bi("Tatil günleri","Режим выходных"), [h[0] for h in holiday_options],
-                       index= st.session_state.get("holiday_idx",1), key="holiday_selbox")
-    st.session_state["holiday_idx"] = [h[0] for h in holiday_options].index(sel)
-    st.session_state["holiday_mode"] = dict(holiday_options)[sel]
-    
-
-    
-    # Tatil günleri değişikliğinde hesaplamaları güncelle
-    current_holiday_mode = dict(holiday_options)[sel]
-    if st.session_state.get("holiday_mode") != current_holiday_mode:
-        st.session_state["holiday_mode"] = current_holiday_mode
-        # Hesaplamaları güncelle
-        st.session_state["_holiday_mode_changed"] = True
-        # Sayfayı yenile ki hesaplamalar güncellensin
-        st.rerun()
-
-    cC, cD = st.columns(2)
-    with cC:
-        # Günlük çalışma saati - basit widget, session_state otomatik güncellenir
-        st.session_state["hours_per_day"] = st.number_input(
-            bi("Günlük çalışma saati","Часов в день"), min_value=6.0, max_value=16.0, value=10.0, step=0.5, key="hours_per_day_inp"
-        )
-    with cD:
-        st.session_state["scenario"] = st.selectbox(
-            bi("👷‍♂️ Adam-saat senaryosu","👷‍♂️ Сценарий норм трудозатрат"), ["İdeal","Gerçekçi","Kötü"],
-            index=["İdeal","Gerçekçi","Kötü"].index(st.session_state.get("scenario","Gerçekçi")),
-            key="scenario_sel"
-        )
-
-    # Kapsam notu (müşteri varsayımları)
-    st.caption(bi("SNG kapsamı: Kırgızistan, Özbekistan, Tacikistan, Türkmenistan. VKS: Türkiye.",
-                  "СНГ: Кыргызстан, Узбекистан, Таджикистан, Туркменистан. ВКС: Турция."))
-    st.caption(bi("Patent bedeli her ay sabit maliyet olarak kabul edilir; NDFL mahsup edilmez (basitleştirilmiş yaklaşım).",
-                  "Платёж за патент учитывается как фиксированная ежемесячная затрата; в НДФЛ не засчитывается (упрощённая модель)."))
-
 # ==================== 1B) ADAM-SAAT NORMLARI (ayrı başlık) ====================
 with tab_genel:
     with st.expander("👷‍♂️ Adam-saat Normları (Senaryolar) / 👷‍♂️ Нормы трудозатрат (сценарии)", expanded=False):
@@ -3495,9 +3278,8 @@ with tab_matris:
         st.session_state.pop("consumables_rate_eff", None)
         st.session_state.pop("overhead_rate_eff", None)
         st.session_state.pop("indirect_rate_total_eff", None)
-        st.info(bi("ℹ️ Override kapalı: Manuel Sarf/Overhead/Indirect oranları kullanılacak; матрица sadece gösterim amaçlı.",
+        st.info(bi("ℹ️ Override kapalı: Manuel Sarf/Overhead/Indirect oranları kullanılacak; матрица sadece гösterim amaçlı.",
                    "ℹ️ Перекрытие выключено: используются ручные проценты; суммы матрицы — только для отображения."))
-
 # ==================== 6) SONUÇLAR: Tüm Hesaplama Sonuçları ====================
 with tab_sonuclar:
     left, right = st.columns([0.8,0.2])
@@ -3948,7 +3730,6 @@ with tab_sonuclar:
                 st.session_state["calculation_results"] = None
             finally:
                 clear_loading_placeholder()
-    # Hesaplama sonuçlarını göster
     if st.session_state.get("calculation_results"):
         results = st.session_state["calculation_results"]
         data = results["data"]
@@ -4024,6 +3805,11 @@ with tab_sonuclar:
         
         # Oranlar
         bih("📊 Etkili Oranlar","📊 Эффективные доли", level=3)
+        _mode_override = bool(st.session_state.get("use_matrix_override", False))
+        if _mode_override:
+            st.markdown("<div style='display:inline-block;padding:2px 8px;border-radius:9999px;background:#e6fffa;border:1px solid #99f6e4;color:#065f46;font-weight:600;margin-bottom:8px;'>"+bi("Mod: Matris Override","Режим: Матрица override")+"</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div style='display:inline-block;padding:2px 8px;border-radius:9999px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-weight:600;margin-bottom:8px;'>"+bi("Mod: Manuel %","Режим: Ручные %")+"</div>", unsafe_allow_html=True)
         st.markdown(bi(f"**🧴 Sarf:** {data['consumables_rate_eff']*100:.2f}%",
                        f"**🧴 Расходники:** {data['consumables_rate_eff']*100:.2f}%"))
         st.markdown(bi(f"**🧮 Overhead:** {data['overhead_rate_eff']*100:.2f}%",
@@ -4933,7 +4719,6 @@ BETA_DIFFICULTY_TO_PRICE= 1.0    # 0..1 (1=tam, 0=sızdırma)
 
 price_mult = (1 + BETA_SCENARIO_TO_PRICE  * (s_mult - 1)) \
            * (1 + BETA_DIFFICULTY_TO_PRICE* (z_mult - 1))
-
 bare_as_price        *= price_mult
 with_extras_as_price *= price_mult
 
