@@ -36,6 +36,26 @@ OVERHEAD_RATE_DEFAULT = 15.0  # Yüzde olarak (15.0%)
 OVERHEAD_RATE_MAX     = 25.0  # Yüzde olarak (25.0%)
 CONSUMABLES_RATE_DEFAULT = 5.0  # Yüzde olarak (5.0%)
 
+# =============== Yardımcı Fonksiyonlar ===============
+def ratio_to_pct(value):
+    try:
+        return float(value) * 100.0
+    except Exception:
+        return 0.0
+
+
+def pct_to_ratio(value):
+    try:
+        return float(value) / 100.0
+    except Exception:
+        return 0.0
+
+
+def eff(key: str, default):
+    """CONST_OVERRIDES içinden etkin değeri getirir, yoksa varsayılanı döner."""
+    overrides = st.session_state.get("CONST_OVERRIDES", {})
+    return overrides.get(key, default)
+
 # --- Gruplu Sarf ve Genel Gider preset'leri ---
 CONSUMABLES_PRESET = [
     ("Bağ teli / tel sarf", 1.2),
