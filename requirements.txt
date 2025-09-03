@@ -1,7 +1,10 @@
-requests>=2.32.0
-numpy>=2.2.0
-streamlit>=1.48.0
-pandas>=2.3.0
+# Modern paket sürümleri
+streamlit>=1.32
+numpy>=1.26,<2
+pandas>=2.2
 matplotlib>=3.10.0
 openai>=1.99.0
-faiss-cpu==1.8.0.post1
+requests>=2.32.0
+
+# FAISS - Streamlit Cloud uyumlu sürüm
+faiss-cpu==1.12.0 ; python_version >= "3.10" and platform_machine == "x86_64"
