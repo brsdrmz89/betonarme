@@ -9,24 +9,7 @@ import pandas as pd  # pyright: ignore[reportMissingImports]
 from datetime import date, timedelta
 from pandas import ExcelWriter  # pyright: ignore[reportMissingImports]
 import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
-# FAISS opsiyonel import
-try:
-    import faiss
-    _FAISS_AVAILABLE = True
-except Exception:
-    _FAISS_AVAILABLE = False
-    print("⚠️ FAISS kullanılamıyor. RAG özellikleri devre dışı.")
-
-# RAG backend opsiyonel import
-if _FAISS_AVAILABLE:
-    try:
-        from rag_backend import init_backend, reset_backend, add_records, search, migrate_from_jsonl_if_needed, get_status
-        _RAG_BACKEND_AVAILABLE = True
-    except Exception as e:
-        _RAG_BACKEND_AVAILABLE = False
-        print(f"⚠️ RAG backend yüklenemedi: {e}")
-else:
-    _RAG_BACKEND_AVAILABLE = False
+from rag_backend import init_backend, reset_backend, add_records, search, migrate_from_jsonl_if_needed, get_status
 
 # =============== AUTO-RAG SİSTEMİ ===============
 @st.cache_data(ttl=300, show_spinner=False)
@@ -473,8 +456,8 @@ st.set_page_config(
 )
 
 # =============== RAG BACKEND BAŞLATMA ===============
-# Uygulama başlangıcında RAG backend'ini başlat (opsiyonel)
-if 'rag_backend_initialized' not in st.session_state and _RAG_BACKEND_AVAILABLE:
+# Uygulama başlangıcında RAG backend'ini başlat
+if 'rag_backend_initialized' not in st.session_state:
     try:
         init_backend()
         migration_result = migrate_from_jsonl_if_needed()
@@ -486,8 +469,6 @@ if 'rag_backend_initialized' not in st.session_state and _RAG_BACKEND_AVAILABLE:
     except Exception as e:
         st.error(f"❌ RAG backend başlatılırken hata: {str(e)}")
         st.session_state['rag_backend_initialized'] = False
-elif not _RAG_BACKEND_AVAILABLE:
-    st.session_state['rag_backend_initialized'] = False
 
 # =============== 2) MODERN STİL ===============
 def inject_style():
@@ -5464,30 +5445,23 @@ with tab_asistan:
     bih("📚 RAG: Dosya yükle → indeksle → ara","📚 RAG: загрузить → проиндексировать → искать", level=3)
     
     # RAG Durum Gösterimi
-    # RAG Durumu (opsiyonel)
-    if _RAG_BACKEND_AVAILABLE:
-        status = get_status()
-        col_status1, col_status2, col_status3 = st.columns(3)
-        with col_status1:
-            st.metric("📊 Toplam Kayıt", f"{status['count']:,}")
-        with col_status2:
-            st.metric("🔢 Boyut", f"{status['dimension'] or '-'}")
-        with col_status3:
-            st.metric("💾 İndeks Durumu", "✅ Aktif" if status['index_exists'] else "❌ Yok")
-        
-        # Performans uyarısı
-        if status['count'] > 20000:
-            st.warning("⚠️ **Performans Uyarısı:** Çok büyük indeks (>20k kayıt). Arama yavaşlayabilir.")
-    else:
-        st.warning("⚠️ **RAG sistemi kullanılamıyor.** FAISS yüklenemedi.")
-        st.info("💡 Alternatif: Dosya yükleme ile çalışabilirsiniz.")
+    status = get_status()
+    col_status1, col_status2, col_status3 = st.columns(3)
+    with col_status1:
+        st.metric("📊 Toplam Kayıt", f"{status['count']:,}")
+    with col_status2:
+        st.metric("🔢 Boyut", f"{status['dimension'] or '-'}")
+    with col_status3:
+        st.metric("💾 İndeks Durumu", "✅ Aktif" if status['index_exists'] else "❌ Yok")
+    
+    # Performans uyarısı
+    if status['count'] > 20000:
+        st.warning("⚠️ **Performans Uyarısı:** Çok büyük indeks (>20k kayıt). Arama yavaşlayabilir.")
     
     uploads = st.file_uploader(bi("Dosya yükle (.txt, .csv, .xlsx)","Загрузить файлы (.txt, .csv, .xlsx)"), type=["txt","csv","xlsx"], accept_multiple_files=True, key="rag_up")
-    
-    if _RAG_BACKEND_AVAILABLE:
-        cR1, cR2, cR3 = st.columns(3)
-        with cR1:
-            if st.button(bi("📥 İndeksle (Embed + Kaydet)","📥 Проиндексировать (эмбед + сохранить)")):
+    cR1, cR2, cR3 = st.columns(3)
+    with cR1:
+        if st.button(bi("📥 İndeksle (Embed + Kaydet)","📥 Проиндексировать (эмбед + сохранить)")):
             if not uploads:
                 st.warning(bi("Dosya seçin.","Выберите файл(ы)."))
             else:
@@ -5534,17 +5508,17 @@ with tab_asistan:
                 except Exception as e:
                     st.error(f"❌ İndeksleme sırasında hata: {str(e)}")
                 finally:
-                                            # Progress bar'ı temizle
-                        progress_bar.empty()
-                        status_text.empty()
-        with cR2:
-            if st.button(bi("🧹 RAG temizle","🧹 Очистить RAG")):
-                try:
-                    reset_backend()
-                    st.success(bi("✅ İndeks sıfırlandı.","✅ Индекс сброшен."))
-                except Exception as e:
-                    st.error(bi(f"❌ Hata: {e}", f"❌ Ошибка: {e}"))
-        with cR3:
+                    # Progress bar'ı temizle
+                    progress_bar.empty()
+                    status_text.empty()
+    with cR2:
+        if st.button(bi("🧹 RAG temizle","🧹 Очистить RAG")):
+            try:
+                reset_backend()
+                st.success(bi("✅ İndeks sıfırlandı.","✅ Индекс сброшен."))
+            except Exception as e:
+                st.error(bi(f"❌ Hata: {e}", f"❌ Ошибка: {e}"))
+    with cR3:
         q = st.text_input(bi("🔎 RAG' de ara","🔎 Поиск в RAG"), value=st.session_state.get("rag_q",""))
         
         # Filtre inputları
@@ -5670,15 +5644,12 @@ with tab_asistan:
                     apply_suggestions(selected_suggestions)
                     st.rerun()
         else:
-            # RAG durumu kontrolü (opsiyonel)
-            if _RAG_BACKEND_AVAILABLE:
-                status = get_status()
-                if status['count'] == 0:
-                    st.warning("⚠️ **Henüz RAG verisi yok.** Dosya yükleyip indeksleyin.")
-                else:
-                    st.info("ℹ️ **Auto-RAG aktif.** Değişikliklerde otomatik öneriler gelecek.")
+            # RAG durumu kontrolü
+            status = get_status()
+            if status['count'] == 0:
+                st.warning("⚠️ **Henüz RAG verisi yok.** Dosya yükleyip indeksleyin.")
             else:
-                st.warning("⚠️ **RAG sistemi kullanılamıyor.** FAISS yüklenemedi.")
+                st.info("ℹ️ **Auto-RAG aktif.** Değişikliklerde otomatik öneriler gelecek.")
         
         # Auto-RAG Günlük
         if "change_log" in st.session_state and st.session_state["change_log"]:
