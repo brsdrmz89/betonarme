@@ -480,12 +480,12 @@ def inject_style():
             --secondary-color: #ff7f0e;
             --success-color: #2ca02c;
             --warning-color: #d62728;
-            --info-color: #9467bd;
+            --info-color: #a8d8ea;
             --light-bg: #f8f9fa;
             --dark-bg: #343a40;
             --border-color: #dee2e6;
-            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            --gradient-primary: linear-gradient(135deg, #a8d8ea 0%, #c7d2fe 100%);
+            --gradient-secondary: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%);
             
             /* Font ailesi ve boyutları */
             --font-primary: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
@@ -2171,9 +2171,9 @@ inject_style()
 # ---------- Modern Sidebar: API anahtarları (isteğe bağlı) ----------
 with st.sidebar:
     st.markdown("""
-    <div style="text-align: center; padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 15px; margin-bottom: 1rem;">
-        <h3 style="margin: 0; color: white;">🔐 Entegrasyonlar</h3>
-        <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.9rem;">API anahtarları ile gelişmiş özellikler</p>
+    <div style="text-align: center; padding: 1rem; background: linear-gradient(135deg, #a8d8ea 0%, #c7d2fe 100%); color: #333; border-radius: 15px; margin-bottom: 1rem;">
+        <h3 style="margin: 0; color: #333;">🔐 Entegrasyonlar</h3>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 0.9rem; color: #555;">API anahtarları ile gelişmiş özellikler</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2215,13 +2215,8 @@ with st.sidebar:
     st.markdown("---")
     # Alt bilgi kaldırıldı (tekrarlı sürüm gösterimini sadeleştiriyoruz)
 
-# Modern başlık
-st.markdown("""
-<div class="main-header">
-    <h1>🏗️ Betonarme Hesaplama Modülü</h1>
-    <p>Reinforced Concrete Labor Cost Calculator • Профессиональный калькулятор стоимости работ</p>
-</div>
-""", unsafe_allow_html=True)
+# Modern başlık - sadece Kapak sekmesi için özel başlık
+# Ana başlık kaldırıldı, her sekmede tekrar etmesin diye
 
 st.markdown("""
 <div style="text-align: center; margin-bottom: 2rem;">
@@ -2232,7 +2227,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------- Modern Sekmeler ----------
-tab_mantik, tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonuclar, tab_asistan, tab_import = st.tabs([
+tab_kapak, tab_mantik, tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matris, tab_sonuclar, tab_asistan, tab_import = st.tabs([
+    f"🏠 {bi('Kapak','Обложка')}",
     f"🧮 {bi('Mantık','Методология')}",
     f"⚙️ {bi('Sabitler','Константы')}",
     f"🚀 {bi('Genel','Общие')}", 
@@ -2244,7 +2240,86 @@ tab_mantik, tab_sabitler, tab_genel, tab_eleman, tab_roller, tab_gider, tab_matr
     f"🤖 {bi('Asistan','Ассистент')}",
     f"📥 {bi('Import','Импорт')}"
 ])
+with tab_kapak:
+    # Modern Kapak Sayfası
+    st.markdown("""
+    <div style="text-align: center; padding: 4rem 2rem; background: linear-gradient(135deg, #a8d8ea 0%, #c7d2fe 100%); color: #333; border-radius: 25px; margin: 2rem 0; box-shadow: 0 20px 40px rgba(168, 216, 234, 0.15);">
+        <div style="margin-bottom: 2rem;">
+            <h1 style="font-size: 4rem; font-weight: 800; margin: 0; text-shadow: 1px 1px 2px rgba(0,0,0,0.1);">🏗️</h1>
+        </div>
+        <h1 style="font-size: 3.2rem; font-weight: 700; margin: 1rem 0; text-shadow: 1px 1px 2px rgba(0,0,0,0.1); color: #333;">Betonarme Hesaplama Modülü</h1>
+        <h2 style="font-size: 1.6rem; font-weight: 500; margin: 0.5rem 0; opacity: 0.8; color: #555;">Reinforced Concrete Labor Cost Calculator</h2>
+        <h3 style="font-size: 1.3rem; font-weight: 400; margin: 0.5rem 0; opacity: 0.7; color: #666;">Профессиональный калькулятор стоимости работ</h3>
+        <div style="border-top: 3px solid rgba(51,51,51,0.2); margin: 2.5rem 0; width: 70%; margin-left: auto; margin-right: auto;"></div>
+        <p style="font-size: 1.3rem; margin: 1rem 0; opacity: 0.8; color: #555; font-weight: 500;">Moskova Şantiye Gerçeklerine Göre Profesyonel Maliyet Analizi</p>
+        <p style="font-size: 1.1rem; margin: 0.5rem 0; opacity: 0.7; color: #666;">Professional Cost Analysis According to Moscow Construction Site Realities</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Özellikler Grid
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div style="background: #f8f9fa; padding: 2rem; border-radius: 20px; text-align: center; border: 1px solid #e9ecef; box-shadow: 0 8px 25px rgba(0,0,0,0.08);">
+            <h3 style="color: #333; margin: 0 0 1rem 0;">🌍 Çok Uluslu Destek</h3>
+            <p style="color: #666; margin: 0; font-size: 0.95rem;">RUS • SNG • VKS<br/>Progresif Vergi Sistemi<br/>Patent ve Elden Ödemeler</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div style="background: #f8f9fa; padding: 2rem; border-radius: 20px; text-align: center; border: 1px solid #e9ecef; box-shadow: 0 8px 25px rgba(0,0,0,0.08);">
+            <h3 style="color: #333; margin: 0 0 1rem 0;">🤖 AI Entegrasyonu</h3>
+            <p style="color: #666; margin: 0; font-size: 0.95rem;">RAG Sistemi<br/>GPT-4 Önerileri<br/>Otomatik Analiz</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div style="background: #f8f9fa; padding: 2rem; border-radius: 20px; text-align: center; border: 1px solid #e9ecef; box-shadow: 0 8px 25px rgba(0,0,0,0.08);">
+            <h3 style="color: #333; margin: 0 0 1rem 0;">📊 Profesyonel Analiz</h3>
+            <p style="color: #666; margin: 0; font-size: 0.95rem;">Sorumluluk Matrisi<br/>Moskova Standartları<br/>Detaylı Raporlama</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Versiyon ve Bilgi
+    st.markdown("""
+    <div style="background: #ffffff; padding: 2rem; border-radius: 20px; text-align: center; margin: 2rem 0; border: 2px solid #e9ecef; box-shadow: 0 8px 25px rgba(0,0,0,0.08);">
+        <h4 style="color: #333; margin: 0 0 1rem 0;">📋 Sistem Bilgileri</h4>
+        <div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 1rem;">
+            <div style="flex: 1; min-width: 200px;">
+                <p style="color: #666; margin: 0.5rem 0; font-weight: 600;">Versiyon</p>
+                <p style="color: #333; margin: 0; font-size: 1.1rem;">v{}</p>
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <p style="color: #666; margin: 0.5rem 0; font-weight: 600;">Son Güncelleme</p>
+                <p style="color: #333; margin: 0; font-size: 1.1rem;">2025</p>
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <p style="color: #666; margin: 0.5rem 0; font-weight: 600;">Platform</p>
+                <p style="color: #333; margin: 0; font-size: 1.1rem;">Streamlit</p>
+            </div>
+        </div>
+    </div>
+    """.format(get_app_version(auto_bump=False)), unsafe_allow_html=True)
+    
+    # Başlama Butonu
+    st.markdown("""
+    <div style="text-align: center; margin: 2rem 0;">
+        <p style="color: #666; font-size: 1.1rem; margin-bottom: 1rem;">Hesaplamaya başlamak için aşağıdaki sekmeleri kullanın</p>
+    </div>
+    """, unsafe_allow_html=True)
+
 with tab_mantik:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">🧮 Hesap Mantığı ve Metodoloji</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Calculation Logic and Methodology • Логика расчёта и методология</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     bih("🧮 Hesap Mantığı ve Metodoloji","🧮 Методология расчёта", level=3)
     bitr("Bu bölüm, yazılımın neyi, nasıl ve hangi sırayla hesapladığını en sade haliyle açıklar.",
          "Этот раздел простыми словами объясняет, что и как считает программа.")
@@ -2478,6 +2553,14 @@ with tab_mantik:
 
 # ==================== 0) SABİTLER ====================
 with tab_sabitler:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">⚙️ Sabitler ve Parametreler</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Constants and Parameters • Константы и параметры</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # Yardımcı fonksiyonlar
     def pct_to_ratio(x): return float(x)/100.0
     def ratio_to_pct(x): return float(x)*100.0
@@ -2932,6 +3015,14 @@ with tab_sabitler:
         st.markdown('</div>', unsafe_allow_html=True)
 # ==================== 1) GENEL ====================
 with tab_genel:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">⭐ Genel Ayarlar</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">General Settings • Общие настройки</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     col1, col2 = st.columns(2)
     with col1:
         st.session_state["prim_sng"] = st.checkbox(
@@ -3198,6 +3289,14 @@ with tab_genel:
 
 # ==================== 2) ELEMAN & METRAJ ====================
 with tab_eleman:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">🧩 Eleman ve Metraj</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Elements and Quantities • Элементы и объёмы</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     bih("🧩 Betonarme Elemanları","🧩 Элементы монолитных работ", level=3)
     cols = st.columns(3)
     sel_flags={}
@@ -3239,6 +3338,14 @@ with tab_eleman:
 
 # ==================== 3) ROLLER ====================
 with tab_roller:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">🛠️ Rol Kompozisyonu</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Role Composition • Состав ролей</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     bih("🛠️ Rol Kompozisyonu (1 m³ için)","🛠️ Состав ролей (на 1 м³)", level=3)
     # Roller tablosu için state kontrolü
     if "roles_df" not in st.session_state:
@@ -3280,6 +3387,14 @@ with tab_roller:
 
 # ==================== 4) GİDERLER (sade) ====================
 with tab_gider:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">💰 Giderler ve Maliyetler</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Expenses and Costs • Затраты и расходы</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     bih("👥 Global Kişi Başı (Aylık) Giderler","👥 Глобальные затраты на человека (в месяц)", level=3)
     c1,c2,c3 = st.columns(3)
     with c1:
@@ -3500,6 +3615,14 @@ with tab_gider:
                   f"✅ Итого по группам: {grand_total:.2f}% ({grand_total/100.0:.3f})"))
 # ==================== 5) SORUMLULUK MATRİSİ (şık) ====================
 with tab_matris:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">🔗 Sorumluluk Matrisi</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Responsibility Matrix • Матрица ответственности</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     bih("✨ Sorumluluk Matrisi (checkbox + % katkı)", "✨ Матрица ответственности (чекбокс + вклад, %)", level=4)
     bitr("Seçtiğin satırlar bize ait maliyet sayılır. Yandaki yüzde kutusu 'toplam maliyete oran' katkısıdır.",
          "Отмеченные строки считаются затратами подрядчика. Поле с процентом — вклад в общую стоимость.")
@@ -3892,6 +4015,14 @@ with tab_matris:
 
 # ==================== 6) SONUÇLAR: Tüm Hesaplama Sonuçları ====================
 with tab_sonuclar:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">📊 Sonuçlar ve Analizler</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Results and Analysis • Результаты и анализ</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     left, right = st.columns([0.8,0.2])
     with left:
         bih("📊 Hesap Sonuçları Özeti","📊 Сводка результатов расчёта", level=2)
@@ -3914,7 +4045,7 @@ with tab_sonuclar:
         st.session_state["calculation_results"] = None
 
     # Hesaplama butonu
-    if st.button(bi("🧮 HESAPLA","🧮 РАССЧИТАТЬ"), type="primary", use_container_width=True, key="hesapla_sonuclar", help="Hesaplamayı başlat"):
+    if st.button(bi("🧮 HESAPLA","🧮 РАССЧИТАТЬ"), type="secondary", use_container_width=True, key="hesapla_sonuclar", help="Hesaplamayı başlat"):
         # Auto-RAG tetikleme (hesaplama sonrası)
         run_auto_rag()
         
@@ -3922,9 +4053,9 @@ with tab_sonuclar:
         ph = get_loading_placeholder()
         with ph.container():
             st.markdown("""
-            <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 20px; margin: 1rem 0;">
-                <h3 style="margin: 0; color: white;">⚡ Hesaplama İşlemi / ⚡ Процесс расчёта</h3>
-                <p style="margin: 0.5rem 0 0 0; opacity: 0.9;">Lütfen bekleyin, sonuçlar hazırlanıyor... / Пожалуйста, подождите, формируем результаты…</p>
+            <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #a8d8ea 0%, #c7d2fe 100%); color: #333; border-radius: 20px; margin: 1rem 0;">
+                <h3 style="margin: 0; color: #333;">⚡ Hesaplama İşlemi / ⚡ Процесс расчёта</h3>
+                <p style="margin: 0.5rem 0 0 0; opacity: 0.8; color: #555;">Lütfen bekleyin, sonuçlar hazırlanıyor... / Пожалуйста, подождите, формируем результаты…</p>
             </div>
             """, unsafe_allow_html=True)
         with st.spinner("🚀 Hesaplamalar yapılıyor... / 🚀 Выполняем расчёты…"):
@@ -4480,9 +4611,9 @@ with tab_sonuclar:
         
         # Profesyonel Maliyet Analizi Dashboard
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem;">
-            <h3 style="color: white; margin: 0; text-align: center;">📊 PROFESYONEL MALİYET ANALİZİ DASHBOARD</h3>
-            <p style="color: white; opacity: 0.9; margin: 0.5rem 0 0 0; text-align: center; font-size: 0.9rem;">
+        <div style="margin-top: 2rem; background: #f8f9fa; padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; border: 1px solid #e9ecef;">
+            <h3 style="color: #333; margin: 0; text-align: center;">📊 PROFESYONEL MALİYET ANALİZİ DASHBOARD</h3>
+            <p style="color: #666; margin: 0.5rem 0 0 0; text-align: center; font-size: 0.9rem;">
                 Moskova Şantiye Gerçeklerine Göre Detaylı Maliyet Dağılımı ve Sorumluluk Matrisi Entegrasyonu
             </p>
         </div>
@@ -4491,11 +4622,16 @@ with tab_sonuclar:
         # Ana Metrikler - 4 Sütunlu Profesyonel Layout
         col_main1, col_main2, col_main3, col_main4 = st.columns(4)
         
+        # Toplam oran hesaplama
+        total_rate_float = (st.session_state.get("consumables_rate_eff", 0) + 
+                           st.session_state.get("overhead_rate_eff", 0)) * 100
+        
         with col_main1:
             st.markdown("""
             <div style="background: #ffffff; padding: 1rem; border-radius: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border: 1px solid #e9ecef;">
                 <h4 style="color: #495057; margin: 0; font-weight: 600;">💰 Toplam Proje Maliyeti</h4>
                 <p style="color: #212529; font-size: 1.5rem; font-weight: 700; margin: 0.5rem 0;">{total_cost:,.0f} ₽</p>
+                <p style="color: #6c757d; font-size: 0.8rem; margin: 0;">Genel Toplam</p>
             </div>
             """.format(total_cost=total_cost), unsafe_allow_html=True)
         
@@ -4674,8 +4810,8 @@ with tab_sonuclar:
         # Sorumluluk Matrisi Etkisi Analizi
         st.markdown("---")
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0; border: 1px solid #dee2e6;">
-            <h4 style="color: #495057; margin: 0; text-align: center; font-weight: 600;">🔗 SORUMLULUK MATRİSİ MALİYET ETKİSİ ANALİZİ</h4>
+        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; border: 1px solid #e9ecef;">
+            <h4 style="color: #333; margin: 0; text-align: center; font-weight: 600;">🔗 SORUMLULUK MATRİSİ MALİYET ETKİSİ ANALİZİ</h4>
         </div>
         """, unsafe_allow_html=True)
         
@@ -4768,7 +4904,7 @@ with tab_sonuclar:
         # Karşılaştırma ve Değerlendirme
         st.markdown("---")
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); padding: 1rem; border-radius: 10px; margin: 1rem 0;">
+        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; border: 1px solid #e9ecef;">
             <h4 style="color: #333; margin: 0; text-align: center;">🔍 MOSKOVA ŞANTİYE KARŞILAŞTIRMA VE DEĞERLENDİRME</h4>
         </div>
         """, unsafe_allow_html=True)
@@ -4781,39 +4917,39 @@ with tab_sonuclar:
             total_rate_float = 0.0
         
         if total_rate_float == 0:
-            st.error("""
-            <div style="background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
-                <h5 style="color: #721c24; margin: 0 0 0.5rem 0;">🚨 SIFIR ORANLAR - Veri Eksikliği</h5>
-                <p style="color: #721c24; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
-                <p style="color: #721c24; margin: 0.2rem 0;"><strong>Durum:</strong> Sarf ve Overhead oranları sıfır</p>
-                <p style="color: #721c24; margin: 0.2rem 0;"><strong>Çözüm:</strong> Lütfen proje verilerini kontrol edin ve oranları güncelleyin</p>
+            st.markdown("""
+            <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 15px; padding: 1.5rem; margin: 1rem 0;">
+                <h5 style="color: #333; margin: 0 0 0.5rem 0; text-align: center;">🚨 SIFIR ORANLAR - Veri Eksikliği</h5>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Durum:</strong> Sarf ve Overhead oranları sıfır</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Çözüm:</strong> Lütfen proje verilerini kontrol edin ve oranları güncelleyin</p>
             </div>
             """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         elif total_rate_float < 20:
-            st.success("""
-            <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
-                <h5 style="color: #155724; margin: 0 0 0.5rem 0;">✅ DÜŞÜK ORANLAR - Maliyet Açısından Avantajlı</h5>
-                <p style="color: #155724; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
-                <p style="color: #155724; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarına göre düşük maliyet</p>
-                <p style="color: #155724; margin: 0.2rem 0;"><strong>Öneri:</strong> Bu oranları koruyarak rekabet avantajı sağlayabilirsiniz</p>
+            st.markdown("""
+            <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 15px; padding: 1.5rem; margin: 1rem 0;">
+                <h5 style="color: #333; margin: 0 0 0.5rem 0; text-align: center;">✅ DÜŞÜK ORANLAR - Maliyet Açısından Avantajlı</h5>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarına göre düşük maliyet</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Öneri:</strong> Bu oranları koruyarak rekabet avantajı sağlayabilirsiniz</p>
             </div>
             """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         elif total_rate_float < 30:
             st.markdown("""
-            <div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
-                <h5 style="color: #0c5460; margin: 0 0 0.5rem 0;">ℹ️ MAKUL ORANLAR - Normal Şantiye Koşulları</h5>
-                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
-                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye gerçeklerine uygun standart oranlar</p>
-                <p style="color: #0c5460; margin: 0.2rem 0;"><strong>Öneri:</strong> Mevcut durumu koruyarak proje yönetimini sürdürün</p>
+            <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 15px; padding: 1.5rem; margin: 1rem 0;">
+                <h5 style="color: #333; margin: 0 0 0.5rem 0; text-align: center;">ℹ️ MAKUL ORANLAR - Normal Şantiye Koşulları</h5>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye gerçeklerine uygun standart oranlar</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Öneri:</strong> Mevcut durumu koruyarak proje yönetimini sürdürün</p>
             </div>
             """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         else:
             st.markdown("""
-            <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
-                <h5 style="color: #856404; margin: 0 0 0.5rem 0;">⚠️ YÜKSEK ORANLAR - Maliyet Kontrolü Gerekli</h5>
-                <p style="color: #856404; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
-                <p style="color: #856404; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarının üzerinde maliyet</p>
-                <p style="color: #856404; margin: 0.2rem 0;"><strong>Öneri:</strong> Sorumluluk matrisini gözden geçirerek maliyet optimizasyonu yapın</p>
+            <div style="background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 15px; padding: 1.5rem; margin: 1rem 0;">
+                <h5 style="color: #333; margin: 0 0 0.5rem 0; text-align: center;">⚠️ YÜKSEK ORANLAR - Maliyet Kontrolü Gerekli</h5>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Toplam Oran:</strong> {total_rate_float:.2f}%</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Değerlendirme:</strong> Moskova şantiye standartlarının üzerinde maliyet</p>
+                <p style="color: #666; margin: 0.2rem 0;"><strong>Öneri:</strong> Sorumluluk matrisini gözden geçirerek maliyet optimizasyonu yapın</p>
             </div>
             """.format(total_rate_float=total_rate_float), unsafe_allow_html=True)
         
@@ -4837,8 +4973,8 @@ with tab_sonuclar:
 
         # Tablolar
         st.markdown("""
-        <div class="table-header">
-            <h3>📊 Eleman Bazında m³ Maliyeti</h3>
+        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; border: 1px solid #e9ecef;">
+            <h3 style="color: #333; margin: 0; text-align: center;">📊 Eleman Bazında m³ Maliyeti</h3>
         </div>
         """, unsafe_allow_html=True)
         st.markdown('<div class="custom-table-wrapper">', unsafe_allow_html=True)
@@ -4846,8 +4982,8 @@ with tab_sonuclar:
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown("""
-        <div class="table-header">
-            <h3>🧑‍🔧 Rol Dağılımı — Aylık Ortalama</h3>
+        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; border: 1px solid #e9ecef;">
+            <h3 style="color: #333; margin: 0; text-align: center;">🧑‍🔧 Rol Dağılımı — Aylık Ortalama</h3>
         </div>
         """, unsafe_allow_html=True)
         st.markdown('<div class="custom-table-wrapper">', unsafe_allow_html=True)
@@ -4856,8 +4992,8 @@ with tab_sonuclar:
 
         # Aylık Manpower Distribution grafiği
         st.markdown("""
-        <div class="table-header">
-            <h3>📈 Manpower Distribution</h3>
+        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 15px; margin-bottom: 1.5rem; border: 1px solid #e9ecef;">
+            <h3 style="color: #333; margin: 0; text-align: center;">📈 Manpower Distribution</h3>
         </div>
         """, unsafe_allow_html=True)
         
@@ -5115,6 +5251,14 @@ with tab_sonuclar:
         st.markdown("4. **HESAPLA** butonuna tıklayarak sonuçları görün")
 # ==================== 7.1) IMPORT: Gelişmiş Veri İçe Aktarma ====================
 with tab_import:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">📥 Veri İçe Aktarma</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">Data Import • Импорт данных</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     bih("📥 İçe Aktar (CSV/Excel/JSON)","📥 Импорт (CSV/Excel/JSON)", level=3)
     bitr(
         "Projeye ait metraj, roller veya özel giderleri dış dosyalardan alabilirsiniz.",
@@ -5239,11 +5383,19 @@ with tab_import:
             st.error(bi(f"Excel oluşturma hatası: {e}", f"Ошибка формирования Excel: {e}"))
 # ==================== 7) ASİSTAN: GPT Öneri + Oran Kontrol + RAG + DEV CONSOLE ====================
 with tab_asistan:
+    # Sekme başlığı
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #e8f4fd 0%, #d1e7dd 100%); color: #333; border-radius: 15px; margin-bottom: 2rem; border: 1px solid #e9ecef;">
+        <h2 style="margin: 0; color: #333; font-size: 2rem; font-weight: 600;">🤖 AI Asistan ve Analiz</h2>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8; font-size: 1.1rem; color: #555;">AI Assistant and Analysis • ИИ-ассистент и анализ</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
     # ---------- 🤖 MOSKOVA ODAKLI GPT ANALİZ VE ÖNERİ SİSTEMİ ----------
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-        <h3 style="color: white; margin: 0;">🤖 Moskova Şantiye Analiz Sistemi</h3>
-        <p style="color: white; opacity: 0.9; margin: 0.5rem 0 0 0; font-size: 0.9rem;">
+    <div style="background: transparent; padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
+        <h3 style="color: #333; margin: 0;">🤖 Moskova Şantiye Analiz Sistemi</h3>
+        <p style="color: #666; opacity: 0.9; margin: 0.5rem 0 0 0; font-size: 0.9rem;">
             Moskova gerçeklerine göre güvenli tarafta kalma analizi ve eksik gider tespiti
         </p>
     </div>
